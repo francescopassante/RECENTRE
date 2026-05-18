@@ -25,21 +25,43 @@ def load_data(data_paths, shapes):
     """
     Loads data from the three datasets, discards the last 6 columns (derivatives),
     transforms degrees to radians for the last 3 columns and returns a dictionary
-    with the data for each task.
+    where each patient is associated to his three tasks.
+
+    {"patient1": {"Resting": ..., "Memory": ..., "Language":...}, "patient2": {...}, ...}
+
+    Also filter so that patients that do not have all three tasks are discarded.
+
     """
-    data_dict = {task: np.zeros(shape=shapes[task]) for task in data_paths.keys()}
+    patient_dict = {}
+    # Count the number of time series in the raw dataset
+    initial_runs = 0
     for task, data_path in data_paths.items():
-        i = 0
         for filename in os.listdir(data_path):
+            initial_runs += 1
             path = Path(data_path) / filename
             data = np.loadtxt(path, usecols=range(6))
             # Aggiunge i dati al dizionario solo se hanno la shape corretta, altrimenti li scarta
-            if data.shape == shapes[task][1:]:
+            if data.shape == shapes[task]:
                 # Transform degrees to radians for the last 3 columns
                 data[:, 3:] = np.deg2rad(data[:, 3:])
-                data_dict[task][i] = data
-                i += 1
-    return data_dict
+                # removes ".txt"
+                patient_id = filename[:-4]
+                patient_dict[patient_id] = patient_dict.get(patient_id, dict())
+                patient_dict[patient_id][task] = data
+
+    # Removes patients that miss one or more of the three tasks
+    patients_to_remove = [
+        patient_id
+        for patient_id, tasks in patient_dict.items()
+        if len(tasks) < len(data_paths)
+    ]
+    for patient_id in patients_to_remove:
+        del patient_dict[patient_id]
+
+    print(
+        f"Filtered patients dataset. Removed {initial_runs - 3 * len(patient_dict)} time series due to shape mismatch or incomplete patients. {3 * len(patient_dict)} left"
+    )
+    return patient_dict
 
 
 # dictionary with the paths to the three datasets
@@ -51,9 +73,10 @@ data_paths = {
 
 # shapes holds the results of count_shapes(data_paths) (kept only the >99% shapes)
 shapes = {
-    "Resting": (1080, 1200, 6),
-    "Memory": (1085, 405, 6),
-    "Language": (1049, 316, 6),
+    "Resting": (1200, 6),
+    "Memory": (405, 6),
+    "Language": (316, 6),
 }
 
+# data holds 1027 complete patients (patients that have all the three tasks recorded)
 data = load_data(data_paths, shapes)
