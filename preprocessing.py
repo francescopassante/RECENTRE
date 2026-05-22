@@ -21,7 +21,7 @@ def count_shapes(data_paths):
     return shapes_count
 
 
-def load_data(data_paths, shapes):
+def load_data(data_paths):
     """
     Loads data from the three datasets, discards the last 6 columns (derivatives),
     transforms degrees to radians for the last 3 columns and returns a dictionary
@@ -32,6 +32,14 @@ def load_data(data_paths, shapes):
     Also filter so that patients that do not have all three tasks are discarded.
 
     """
+
+    # shapes holds the results of count_shapes(data_paths) (kept only the >99% shapes)
+    shapes = {
+        "Resting": (1200, 6),
+        "Memory": (405, 6),
+        "Language": (316, 6),
+    }
+
     patient_dict = {}
     # Count the number of time series in the raw dataset
     initial_runs = 0
@@ -72,29 +80,22 @@ def get_task_dict(patient_dict, task):
     assert task in ["Resting", "Memory", "Language"], (
         f"Valid tasks: Resting, Memory or Language, got {task}"
     )
-    task_dict = {}
-    for id, task in patient_dict.items():
+    single_task_dict = {}
+    for id, task_dict in patient_dict.items():
         task_dict[id] = patient_dict[id][task]
 
-    return task_dict
+    return single_task_dict
 
-
-# dictionary with the paths to the three datasets
-data_paths = {
-    "Resting": "../RECENTRE-main/HCP/RestingStateLR_dataset",
-    "Memory": "../RECENTRE-main/HCP/MemoryTaskLR_dataset",
-    "Language": "../RECENTRE-main/HCP/LanguageTaskLR_dataset",
-}
-
-# shapes holds the results of count_shapes(data_paths) (kept only the >99% shapes)
-shapes = {
-    "Resting": (1200, 6),
-    "Memory": (405, 6),
-    "Language": (316, 6),
-}
 
 if __name__ == "__main__":
+    # dictionary with the paths to the three datasets
+    data_paths = {
+        "Resting": "../RECENTRE-main/HCP/RestingStateLR_dataset",
+        "Memory": "../RECENTRE-main/HCP/MemoryTaskLR_dataset",
+        "Language": "../RECENTRE-main/HCP/LanguageTaskLR_dataset",
+    }
+
     # patient_dict holds complete patients (patients that have all the three tasks recorded)
-    patient_dict = load_data(data_paths, shapes)
-    # task_dicts one dictionary for each task, with {patient_id: data}
+    patient_dict = load_data(data_paths)
+    # task_dicts has one dictionary for each task, with {patient_id: data}
     task_dicts = {task: get_task_dict(patient_dict, task) for task in data_paths.keys()}
