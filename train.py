@@ -208,22 +208,30 @@ if __name__ == "__main__":
 
     print("Train mean: ", mean, "\t Train std: ", std)
 
-    resting_dataset = TimeSeriesDataset(resting_data, resting_patient_ids)
-    val_dataset = TimeSeriesDataset(memory_data[val_patients], val_patients_ids)
-    test_dataset = TimeSeriesDataset(memory_data[test_patients], test_patients_ids)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # create dataloaders for resting, val and test datasets
+    resting_dataset = TimeSeriesDataset(
+        resting_data, resting_patient_ids, device=device
+    )
+    val_dataset = TimeSeriesDataset(
+        memory_data[val_patients], val_patients_ids, device=device
+    )
+    test_dataset = TimeSeriesDataset(
+        memory_data[test_patients], test_patients_ids, device=device
+    )
+
+    # data lives entirely on GPU -> num_workers=0 (CUDA tensors can't cross worker
+    # processes) and pin_memory=False (no H2D copy to pin for).
     train_loader = DataLoader(
-        resting_dataset, batch_size=8192, shuffle=True, num_workers=4, pin_memory=True
+        resting_dataset, batch_size=8192, shuffle=True, num_workers=0, pin_memory=False
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=8192, shuffle=False, num_workers=4, pin_memory=True
+        val_dataset, batch_size=8192, shuffle=False, num_workers=0, pin_memory=False
     )
     test_loader = DataLoader(
-        test_dataset, batch_size=8192, shuffle=False, num_workers=4, pin_memory=True
+        test_dataset, batch_size=8192, shuffle=False, num_workers=0, pin_memory=False
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = GRUModel(
         input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5
     ).to(device)

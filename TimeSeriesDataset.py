@@ -12,15 +12,19 @@ from torch.utils.data import Dataset
 class TimeSeriesDataset(Dataset):
     """A dataset for time series data."""
 
-    def __init__(self, data, ids, sequence_length=10, TRANSFORM=False):
+    def __init__(self, data, ids, sequence_length=10, device="cpu"):
         """
         Args:
-            data (numpy array): Shape [N, T, D]
+            data (numpy array or tensor): Shape [N, T, D]
             sequence_length (int): Length of sub-sequences
+            device: where to keep self.data. Pass 'cuda' to keep the whole
+                dataset resident on GPU and skip per-batch H2D transfers.
         """
-        self.data = data
+        if not torch.is_tensor(data):
+            data = torch.from_numpy(data)
+        self.data = data.to(device=device, dtype=torch.float32)
         self.time_span = sequence_length * 2
-        self.N, self.T, self.D = data.shape
+        self.N, self.T, self.D = self.data.shape
         self.ids = ids
 
     def __len__(self):
@@ -32,6 +36,4 @@ class TimeSeriesDataset(Dataset):
 
         x = self.data[p, t : t + self.time_span : 2, :]  # Sub-sequence
         y = self.data[p, t + (self.time_span) - 1, :]  # Next time step
-        x = torch.tensor(x, dtype=torch.float32)
-        y = torch.tensor(y, dtype=torch.float32)
         return self.ids[p], x, y
