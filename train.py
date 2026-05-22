@@ -174,9 +174,9 @@ def test(model, test_loader, criterion, device, mu, sigma):
 if __name__ == "__main__":
     # dictionary with the paths to the three datasets
     data_paths = {
-        "Resting": "../RECENTRE-main/HCP/RestingStateLR_dataset",
-        "Memory": "../RECENTRE-main/HCP/MemoryTaskLR_dataset",
-        "Language": "../RECENTRE-main/HCP/LanguageTaskLR_dataset",
+        "Resting": "../datasets/HCP/RestingStateLR_dataset",
+        "Memory": "../datasets/HCP/MemoryTaskLR_dataset",
+        "Language": "../datasets/HCP/LanguageTaskLR_dataset",
     }
 
     patient_dict = load_data(data_paths)
@@ -213,9 +213,15 @@ if __name__ == "__main__":
     test_dataset = TimeSeriesDataset(memory_data[test_patients], test_patients_ids)
 
     # create dataloaders for resting, val and test datasets
-    train_loader = DataLoader(resting_dataset, batch_size=1024, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=1024, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=1024, shuffle=False)
+    train_loader = DataLoader(
+        resting_dataset, batch_size=8192, shuffle=True, num_workers=4, pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=8192, shuffle=False, num_workers=4, pin_memory=True
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=8192, shuffle=False, num_workers=4, pin_memory=True
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = GRUModel(
