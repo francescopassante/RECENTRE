@@ -6,7 +6,7 @@ import torch.nn as nn
 import tqdm
 from GRU import GRUModel
 from preprocessing import get_task_dict, load_data
-from TimeSeriesDataset import TimeSeriesDataset
+from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
 from torch.utils.data import DataLoader
 
 
@@ -210,27 +210,47 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # set True to keep the whole dataset resident on GPU and use the vectorized
+    # GPUBatchLoader; set False for the classic CPU-dataset + DataLoader path.
+    use_gpu_loader = True
+
+    dataset_device = device if use_gpu_loader else "cpu"
     resting_dataset = TimeSeriesDataset(
-        resting_data, resting_patient_ids, device=device
+        resting_data, resting_patient_ids, device=dataset_device
     )
     val_dataset = TimeSeriesDataset(
-        memory_data[val_patients], val_patients_ids, device=device
+        memory_data[val_patients], val_patients_ids, device=dataset_device
     )
     test_dataset = TimeSeriesDataset(
-        memory_data[test_patients], test_patients_ids, device=device
+        memory_data[test_patients], test_patients_ids, device=dataset_device
     )
 
-    # data lives entirely on GPU -> num_workers=0 (CUDA tensors can't cross worker
-    # processes) and pin_memory=False (no H2D copy to pin for).
-    train_loader = DataLoader(
-        resting_dataset, batch_size=8192, shuffle=True, num_workers=0, pin_memory=False
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=8192, shuffle=False, num_workers=0, pin_memory=False
-    )
-    test_loader = DataLoader(
-        test_dataset, batch_size=8192, shuffle=False, num_workers=0, pin_memory=False
-    )
+    if use_gpu_loader:
+        train_loader = GPUBatchLoader(resting_dataset, batch_size=8192, shuffle=True)
+        val_loader = GPUBatchLoader(val_dataset, batch_size=8192, shuffle=False)
+        test_loader = GPUBatchLoader(test_dataset, batch_size=8192, shuffle=False)
+    else:
+        train_loader = DataLoader(
+            resting_dataset,
+            batch_size=8192,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=8192,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=8192,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+        )
 
     model = GRUModel(
         input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5
