@@ -2,7 +2,7 @@ import torch.nn as nn
 
 """
 ========================================================================================================================
-Change from previous version: removed funny comments and changed the output to (y - x[-1]) instead of (x[-1] - y)
+Change from previous version: removed funny comments and changed the output to y + x[-1] instead of (x[-1] - y)
 ========================================================================================================================
 """
 
@@ -63,4 +63,4 @@ class GRUModel(nn.Module):
         y_mean = self.fc_mean(h_n)  # Shape [batch_size, output_dim]
         y_logvar = self.fc_logvar(h_n)
 
-        return (y_mean - x[:, -1, :]), y_logvar.exp()
+        return (x[:, -1, :] + y_mean), y_logvar.exp()

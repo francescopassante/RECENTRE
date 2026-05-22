@@ -82,7 +82,7 @@ def get_task_dict(patient_dict, task):
     )
     single_task_dict = {}
     for id, task_dict in patient_dict.items():
-        task_dict[id] = patient_dict[id][task]
+        single_task_dict[id] = patient_dict[id][task]
 
     return single_task_dict
 
@@ -90,12 +90,12 @@ def get_task_dict(patient_dict, task):
 if __name__ == "__main__":
     # dictionary with the paths to the three datasets
     data_paths = {
-        "Resting": "../RECENTRE-main/HCP/RestingStateLR_dataset",
-        "Memory": "../RECENTRE-main/HCP/MemoryTaskLR_dataset",
-        "Language": "../RECENTRE-main/HCP/LanguageTaskLR_dataset",
+        "Resting": "RECENTRE-main/HCP/RestingStateLR_dataset",
+        "Memory": "RECENTRE-main/HCP/MemoryTaskLR_dataset",
+        "Language": "RECENTRE-main/HCP/LanguageTaskLR_dataset",
     }
 
-    # patient_dict holds complete patients (patients that have all the three tasks recorded)
+    # # patient_dict holds complete patients (patients that have all the three tasks recorded)
     patient_dict = load_data(data_paths)
-    # task_dicts has one dictionary for each task, with {patient_id: data}
+    # # task_dicts has one dictionary for each task, with {patient_id: data}
     task_dicts = {task: get_task_dict(patient_dict, task) for task in data_paths.keys()}
