@@ -141,28 +141,32 @@ true_values = np.array(true_values)
 pred_values = np.array(pred_values)
 baseline_values = np.array(baseline_values)
 
+# 1) True vs Predicted
 plt.figure(figsize=(8, 8))
-plt.scatter(true_values, pred_values, alpha=0.5, label="Predicted vs True")
-plt.scatter(true_values, baseline_values, alpha=0.5, label="Baseline vs True")
-plt.plot(
-    [true_values.min(), true_values.max()],
-    [true_values.min(), true_values.max()],
-    "k--",
-    label="Ideal",
-)
+plt.scatter(true_values, pred_values, alpha=0.5)
+lo, hi = true_values.min(), true_values.max()
+plt.plot([lo, hi], [lo, hi], "k--", label="Ideal")
 plt.xlabel("True Values")
-plt.ylabel("Predicted / Baseline Values")
-plt.title("Predicted vs True Values and Baseline vs True Values")
+plt.ylabel("Predicted Values")
+plt.title("True vs Predicted")
 plt.legend()
 plt.grid()
-plt.show()
+plt.savefig("true_vs_predicted.png", dpi=150, bbox_inches="tight")
+plt.close()
 
-plt.scatter(pred_values, baseline_values, alpha=0.5)
-plt.xlabel("Predicted Values")
-plt.ylabel("Baseline Values")
-plt.title("Predicted Values vs Baseline Values")
+# 2) Baseline vs Predicted
+plt.figure(figsize=(8, 8))
+plt.scatter(baseline_values, pred_values, alpha=0.5)
+lo = min(baseline_values.min(), pred_values.min())
+hi = max(baseline_values.max(), pred_values.max())
+plt.plot([lo, hi], [lo, hi], "k--", label="Ideal")
+plt.xlabel("Baseline Values")
+plt.ylabel("Predicted Values")
+plt.title("Baseline vs Predicted")
+plt.legend()
 plt.grid()
-plt.show()
+plt.savefig("baseline_vs_predicted.png", dpi=150, bbox_inches="tight")
+plt.close()
 
 # Get all the windows from the first patient in the test set
 random_patient_id = list(patient_pred_true_base.keys())[0]
@@ -204,4 +208,5 @@ for d, ax in enumerate(axes.flat):
     ax.grid(True)
     ax.legend()
 fig.tight_layout()
-plt.show()
+fig.savefig("timeseries_predicted_vs_true.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
