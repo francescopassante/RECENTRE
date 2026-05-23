@@ -5,36 +5,25 @@ import torch
 import torch.nn as nn
 import tqdm
 from GRU import GRUModel
+from metrics import fd, fd_gain
 from preprocessing import get_task_dict, load_data
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
 from torch.utils.data import DataLoader
-
-
-def fd(pred_frame, true_frame, mu, sig):
-    # denormalize before computing FD. frame shape: [batch_size, D]
-    pred_frame = pred_frame * sig + mu
-    true_frame = true_frame * sig + mu
-    translation_error = torch.abs(pred_frame[:, :3] - true_frame[:, :3]).sum(dim=1)
-    rotation_error = 50 * torch.abs(pred_frame[:, 3:] - true_frame[:, 3:]).sum(dim=1)
-    return translation_error + rotation_error
-
-
-def fd_gain(fd_baseline, fd_pred):
-    # fd_baseline and fd_pred shape: [batch_size]
-    gain = (fd_baseline - fd_pred) / (fd_baseline + 1e-6)
-    return gain
 
 
 def train(
     model,
     train_loader,
     val_loader,
+    train_ids,
+    val_ids,
+    test_ids,
     optimizer,
     criterion,
     device,
     epochs,
     mu,
-    sig,
+    sigma,
     checkpoint_path,
     patience=10,
     beta=0.1,
@@ -42,9 +31,12 @@ def train(
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=10
     )
-    # mu/sig as tensors on device for FD denormalization
+    # mu/sigma as tensors on device for FD denormalization
     mu_t = torch.tensor(mu, dtype=torch.float32, device=device)
-    sigma_t = torch.tensor(sig, dtype=torch.float32, device=device)
+    sigma_t = torch.tensor(sigma, dtype=torch.float32, device=device)
+
+    train_loss_history = []
+    val_loss_history = []
 
     best_val_fdg = -1e9
     early_counter = 0
@@ -102,6 +94,9 @@ def train(
 
         scheduler.step(val_loss)
 
+        train_loss_history.append(train_loss)
+        val_loss_history.append(val_loss)
+
         pbar.set_postfix(
             {
                 "train_loss": f"{train_loss:.4f}",
@@ -116,59 +111,23 @@ def train(
         if val_fdg > best_val_fdg:
             best_val_fdg = val_fdg
             early_counter = 0
-            torch.save(model.state_dict(), checkpoint_path)
+            save_dict = {
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "epoch": epoch + 1,
+                "train_ids": train_ids,
+                "val_ids": val_ids,
+                "test_ids": test_ids,
+                "mu": mu,
+                "sigma": sigma,
+            }
+            torch.save(save_dict, checkpoint_path)
         else:
             early_counter += 1
             if early_counter >= patience:
                 break
 
-    return train_loss
-
-
-def test(model, test_loader, criterion, device, mu, sigma):
-    model.eval()
-    test_fd_baselines = []
-    test_fd_preds = []
-    test_nll = 0
-    patient_pred_vs_true = {
-        p: {"pred": [], "true": [], "baseline": []} for p in test_loader.dataset.ids
-    }
-    mu = torch.tensor(mu, dtype=torch.float32, device=device)
-    sigma = torch.tensor(sigma, dtype=torch.float32, device=device)
-    with torch.no_grad():
-        for p, x, y in test_loader:
-            x, y = x.to(device), y.to(device)
-            y_pred, y_logvar = model(x)
-            test_nll += criterion(y_pred, y, y_logvar).item()
-
-            last_x = x[:, -1, :]
-            test_fd_baselines.append(fd(last_x, y, mu, sigma).cpu())
-            test_fd_preds.append(fd(y_pred, y, mu, sigma).cpu())
-            for i in range(len(p)):
-                denormalized_pred = y_pred[i] * sigma + mu
-                denormalized_true = y[i] * sigma + mu
-                denormalized_baseline = last_x[i] * sigma + mu
-                patient_pred_vs_true[p[i]]["pred"].append(
-                    denormalized_pred.cpu().numpy()
-                )
-                patient_pred_vs_true[p[i]]["true"].append(
-                    denormalized_true.cpu().numpy()
-                )
-                patient_pred_vs_true[p[i]]["baseline"].append(
-                    denormalized_baseline.cpu().numpy()
-                )
-
-        test_nll /= len(test_loader)
-        fd_baseline_cat = torch.cat(test_fd_baselines, dim=0)
-        fd_model_cat = torch.cat(test_fd_preds, dim=0)
-
-        test_fd_pred = fd_model_cat.mean().item()
-        test_fdg = fd_gain(fd_baseline_cat, fd_model_cat).mean().item()
-
-    print(
-        f"Test NLL: {test_nll:.4f}, Test FDg: {test_fdg:.4f}, Test FD pred: {test_fd_pred:.4f}"
-    )
-    return patient_pred_vs_true
+    return train_loss_history, val_loss_history
 
 
 if __name__ == "__main__":
@@ -179,34 +138,40 @@ if __name__ == "__main__":
         "Language": "../datasets/HCP/LanguageTaskLR_dataset",
     }
 
+    train_task = "Resting"
+    test_task = "Memory"
+
     patient_dict = load_data(data_paths)
-    resting_dict = get_task_dict(patient_dict, "Resting")
-    memory_dict = get_task_dict(patient_dict, "Memory")
+    train_dict = get_task_dict(patient_dict, train_task)
+    test_dict = get_task_dict(patient_dict, test_task)
 
-    resting_data = np.stack(list(resting_dict.values()), axis=0)
-    resting_patient_ids = list(resting_dict.keys())
-    memory_data = np.stack(list(memory_dict.values()), axis=0)
-    num_patients = len(resting_data)
+    train_data = np.stack(list(train_dict.values()), axis=0)
+    train_data_ids = list(train_dict.keys())
+    test_data = np.stack(list(test_dict.values()), axis=0)
+    num_patients = len(train_data)
 
-    val_percent = 0.3
+    val_percent = 0.5
 
     # seed so that i can compare the same split across many models
     rng = np.random.default_rng(42)
 
+    # Split val and test patients with non-overlapping sets of patients
     val_patients = rng.choice(
         num_patients, size=int(val_percent * num_patients), replace=False
     )
-    val_patients_ids = [np.array(list(memory_dict.keys()))[i] for i in val_patients]
     test_patients = np.setdiff1d(np.arange(num_patients), val_patients)
-    test_patients_ids = [np.array(list(memory_dict.keys()))[i] for i in test_patients]
 
-    # normalize the datasets using the mean and std of the resting dataset (per dimension)
-    mean = resting_data.mean(axis=(0, 1))  # shape [6]
-    std = resting_data.std(axis=(0, 1))  # shape [6]
-    resting_data = (resting_data - mean) / std
-    memory_data = (memory_data - mean) / std
+    # Split val and test patient ids
+    val_patients_ids = [list(test_dict.keys())[i] for i in val_patients]
+    test_patients_ids = [list(test_dict.keys())[i] for i in test_patients]
 
-    print("Train mean: ", mean, "\t Train std: ", std)
+    # normalize the datasets using the mu and sigma of the resting dataset (per dimension)
+    mu = train_data.mean(axis=(0, 1))  # shape [6]
+    sigma = train_data.std(axis=(0, 1))  # shape [6]
+    train_data = (train_data - mu) / sigma
+    test_data = (test_data - mu) / sigma
+
+    print("Train mu: ", mu, "\t Train sigma: ", sigma)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -215,38 +180,40 @@ if __name__ == "__main__":
     use_gpu_loader = True
 
     dataset_device = device if use_gpu_loader else "cpu"
-    resting_dataset = TimeSeriesDataset(
-        resting_data, resting_patient_ids, device=dataset_device
-    )
+    train_dataset = TimeSeriesDataset(train_data, train_data_ids, device=dataset_device)
     val_dataset = TimeSeriesDataset(
-        memory_data[val_patients], val_patients_ids, device=dataset_device
+        test_data[val_patients], val_patients_ids, device=dataset_device
     )
     test_dataset = TimeSeriesDataset(
-        memory_data[test_patients], test_patients_ids, device=dataset_device
+        test_data[test_patients], test_patients_ids, device=dataset_device
     )
 
+    batch_size = 8192
+
     if use_gpu_loader:
-        train_loader = GPUBatchLoader(resting_dataset, batch_size=8192, shuffle=True)
-        val_loader = GPUBatchLoader(val_dataset, batch_size=8192, shuffle=False)
-        test_loader = GPUBatchLoader(test_dataset, batch_size=8192, shuffle=False)
+        train_loader = GPUBatchLoader(
+            train_dataset, batch_size=batch_size, shuffle=True
+        )
+        val_loader = GPUBatchLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        test_loader = GPUBatchLoader(test_dataset, batch_size=batch_size, shuffle=False)
     else:
         train_loader = DataLoader(
-            resting_dataset,
-            batch_size=8192,
+            train_dataset,
+            batch_size=batch_size,
             shuffle=True,
             num_workers=4,
             pin_memory=True,
         )
         val_loader = DataLoader(
             val_dataset,
-            batch_size=8192,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=4,
             pin_memory=True,
         )
         test_loader = DataLoader(
             test_dataset,
-            batch_size=8192,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=4,
             pin_memory=True,
@@ -257,35 +224,24 @@ if __name__ == "__main__":
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     criterion = nn.GaussianNLLLoss()
+    beta = 0.1
 
-    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("../checkpoints", exist_ok=True)
     epochs = 100
     train(
         model,
         train_loader,
         val_loader,
-        optimizer,
-        criterion,
-        device,
-        epochs,
-        mu=mean,
-        sig=std,
-        checkpoint_path="checkpoints/GRU_trainRESTING_testMEMORY.pth",
+        train_ids=train_data_ids,
+        val_ids=val_patients_ids,
+        test_ids=test_patients_ids,
+        optimizer=optimizer,
+        criterion=criterion,
+        device=device,
+        epochs=epochs,
+        mu=mu,
+        sigma=sigma,
+        checkpoint_path=f"../checkpoints/GRU_train{train_task}_test{test_task}_beta{beta}.pth",
         patience=10,
+        beta=beta,
     )
-
-    model.load_state_dict(torch.load("checkpoints/GRU_trainRESTING_testMEMORY.pth"))
-    patient_pred_vs_true = test(
-        model,
-        test_loader,
-        criterion,
-        device,
-        mu=mean,
-        sigma=std,
-    )
-
-    # save to file
-    import pickle
-
-    with open("patient_pred_vs_true_GRU_trainRESTING_testMEMORY.pkl", "wb") as f:
-        pickle.dump(patient_pred_vs_true, f)
