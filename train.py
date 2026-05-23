@@ -117,7 +117,7 @@ def train(
                 "epoch": epoch + 1,
                 "train_ids": train_ids,
                 "val_ids": val_ids,
-                "test_ids": test_ids,
+                "test_dict": test_dict,
                 "mu": mu,
                 "sigma": sigma,
             }
@@ -143,11 +143,11 @@ if __name__ == "__main__":
 
     patient_dict = load_data(data_paths)
     train_dict = get_task_dict(patient_dict, train_task)
-    test_dict = get_task_dict(patient_dict, test_task)
+    val_and_test_dict = get_task_dict(patient_dict, test_task)
 
     train_data = np.stack(list(train_dict.values()), axis=0)
     train_data_ids = list(train_dict.keys())
-    test_data = np.stack(list(test_dict.values()), axis=0)
+    test_data = np.stack(list(val_and_test_dict.values()), axis=0)
     num_patients = len(train_data)
 
     val_percent = 0.5
@@ -162,20 +162,22 @@ if __name__ == "__main__":
     test_patients = np.setdiff1d(np.arange(num_patients), val_patients)
 
     # Split val and test patient ids
-    val_patients_ids = [list(test_dict.keys())[i] for i in val_patients]
-    test_patients_ids = [list(test_dict.keys())[i] for i in test_patients]
+    val_patients_ids = [list(val_and_test_dict.keys())[i] for i in val_patients]
+    test_patients_ids = [list(val_and_test_dict.keys())[i] for i in test_patients]
 
-    # normalize the datasets using the mu and sigma of the resting dataset (per dimension)
+    # save the dictionary of patient_id : data for the test set, to be saved in checkpoints
+    # and used for testing after training
+    test_dict = {pid: val_and_test_dict[pid] for pid in test_patients_ids}
+
+    # normalize the datasets using the mu and sigma of the training dataset (per dimension)
     mu = train_data.mean(axis=(0, 1))  # shape [6]
     sigma = train_data.std(axis=(0, 1))  # shape [6]
     train_data = (train_data - mu) / sigma
     test_data = (test_data - mu) / sigma
 
-    print("Train mu: ", mu, "\t Train sigma: ", sigma)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # set True to keep the whole dataset resident on GPU and use the vectorized
+    # set True to keep the whole dataset on GPU and use the faster
     # GPUBatchLoader; set False for the classic CPU-dataset + DataLoader path.
     use_gpu_loader = True
 
@@ -241,7 +243,7 @@ if __name__ == "__main__":
         epochs=epochs,
         mu=mu,
         sigma=sigma,
-        checkpoint_path=f"../checkpoints/GRU_train{train_task}_test{test_task}_beta{beta}.pth",
-        patience=10,
+        checkpoint_path=f"../checkpoints/GRU_train{train_task}_test{test_task}_beta{beta}_ep{epochs}.pth",
+        patience=100,
         beta=beta,
     )
