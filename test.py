@@ -81,8 +81,8 @@ def test(model, test_loader, criterion, device, mu, sigma):
 # Pick which checkpoint to evaluate. The tag fields (train_task, test_task,
 # beta, epochs) are read from inside the checkpoint, so this path is the only
 # thing to change between runs.
-FILENAME = "GRU_RvM_beta0.5_ep100.pth"
-CHECKPOINT_PATH = f"checkpoints/{FILENAME}"
+FILENAME = "GRU_LvM_beta0.5_ep100.pth"
+CHECKPOINT_PATH = f"checkpoints/cross_task/{FILENAME}"
 
 device = "cpu"
 
@@ -218,7 +218,7 @@ for ax, metric_base, metric_model, label in zip(
     ax.set_ylim(0, hi)
     ax.set_xlabel(f"Baseline {label} (mm)")
     ax.set_ylabel(f"Model {label} (mm)")
-    ax.set_title(f"{label} per dimension (below y=x means model is better)")
+    ax.set_title(f"{label} per dimension")
     ax.legend()
 fig.tight_layout()
 save(fig, "01_error_per_dimension")
@@ -237,9 +237,12 @@ for d, ax in enumerate(axes.flat):
     lo = min(x.min(), y.min())
     hi = max(x.max(), y.max())
     ax.plot([lo, hi], [lo, hi], "k--", label="y = x")
+    ss_res = ((x - y) ** 2).sum()
+    ss_tot = ((x - x.mean()) ** 2).sum()
+    r2 = 1 - ss_res / ss_tot
     ax.set_xlabel("True")
     ax.set_ylabel("Predicted")
-    ax.set_title(DIM_NAMES[d])
+    ax.set_title(f"{DIM_NAMES[d]}   R²={r2:.3f}")
     ax.legend(fontsize=8)
 fig.tight_layout()
 save(fig, "02_true_vs_predicted")
@@ -332,7 +335,7 @@ ax.set_xlim(0, hi)
 ax.set_ylim(0, hi)
 ax.set_xlabel("Baseline FD (per patient)")
 ax.set_ylabel("Model FD (per patient)")
-ax.set_title("Per-patient baseline vs model FD (below y=x ⇒ model improves)")
+ax.set_title("Per-patient baseline vs model FD")
 ax.legend()
 fig.tight_layout()
 save(fig, "04_per_patient_fdg")

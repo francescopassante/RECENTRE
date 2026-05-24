@@ -44,5 +44,5 @@ No tests, lint, or build step. Outputs land in `results/` (test.py) and `results
 
 - Dimension order is fixed: `[Tx, Ty, Tz, Rx, Ry, Rz]`. Rotation indices are `3:6` and get the ×50 mm scaling for display/FD.
 - `GRU.forward` returns **(mean, variance)**, not (mean, logvar). The exp happens inside the model.
-- Checkpoints embed `test_dict`, `mu`, `sigma` — eval scripts read these and do not re-run preprocessing.
+- Checkpoints embed `test_ids`, `test_task`, `mu`, `sigma` — eval scripts read these and reload the per-task dict from `datasets/{test_task}_dict.npy` (no re-running preprocessing).
 - `beta_scan.py` parses β from filenames with regex `beta([0-9]+(?:\.[0-9]+)?)_`; keep the `beta<value>_` token in any new checkpoint names.

@@ -49,10 +49,13 @@ def evaluate(checkpoint_path, device):
     assert fname_beta == sd["beta"], (
         f"filename β={fname_beta} does not match checkpoint β={sd['beta']} in {checkpoint_path}"
     )
-    test_dict = sd["test_dict"]  # {pid: patient_frames}
-    test_ids = list(test_dict.keys())
+    test_ids = sd["test_ids"]
+    test_task = sd["test_task"]
     mu = sd["mu"]
     sigma = sd["sigma"]
+    test_dict = np.load(
+        f"datasets/{test_task}_dict.npy", allow_pickle=True
+    ).item()  # {pid: patient_frames}
 
     test_data = np.array([test_dict[pid] for pid in test_ids])
     test_data = (test_data - mu) / sigma
@@ -134,7 +137,7 @@ device = (
 print(f"device: {device}")
 
 
-CHECKPOINT_DIR = "checkpoints"
+CHECKPOINT_DIR = "checkpoints/beta_scan"
 
 # group checkpoints by β; files ending in "(2).pth" are second runs
 by_beta = defaultdict(list)
