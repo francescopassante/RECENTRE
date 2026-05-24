@@ -40,12 +40,15 @@ def train(
 
     best_val_fdg = -1e9
     early_counter = 0
+    save_dict = {}
     pbar = tqdm.trange(epochs)
     for epoch in pbar:
         # accumulate sample-weighted NLL so the reported per-sample mean is
         # correct even when the last batch is smaller than the rest, and
-        # consistent with the sample-weighted FDg computed below.
-        train_nll_sum = 0.0
+        # consistent with the sample-weighted FDg computed below. Keep
+        # accumulators on the GPU and sync once at epoch end — per-batch
+        # .item()/.cpu() calls were forcing a GPU→host stall every step.
+        train_nll_sum = torch.zeros((), device=device)
         train_n = 0
         train_fd_baselines = []
         train_fd_preds = []
@@ -65,41 +68,52 @@ def train(
             loss.backward()
             optimizer.step()
             bs = y.size(0)
-            train_nll_sum += nll.item() * bs
+            train_nll_sum += nll.detach() * bs
             train_n += bs
-            train_fd_baselines.append(fd_baseline.detach().cpu())
-            train_fd_preds.append(fd_pred.detach().cpu())
+            train_fd_baselines.append(fd_baseline.detach())
+            train_fd_preds.append(fd_pred.detach())
 
-        train_nll = train_nll_sum / train_n
         train_fd_baseline_cat = torch.cat(train_fd_baselines, dim=0)
         train_fd_pred_cat = torch.cat(train_fd_preds, dim=0)
-        train_fdg = fd_gain(train_fd_baseline_cat, train_fd_pred_cat).mean().item()
-        train_fd_pred = train_fd_pred_cat.mean().item()
+        train_fdg_t = fd_gain(train_fd_baseline_cat, train_fd_pred_cat).mean()
+        train_fd_pred_t = train_fd_pred_cat.mean()
+        train_nll_t = train_nll_sum / train_n
+        # single GPU→host sync per epoch
+        train_nll, train_fdg, train_fd_pred = (
+            train_nll_t.item(),
+            train_fdg_t.item(),
+            train_fd_pred_t.item(),
+        )
         train_loss = train_nll - beta * train_fdg
 
         model.eval()
         with torch.no_grad():
             val_fd_baselines = []
             val_fd_preds = []
-            val_nll_sum = 0.0
+            val_nll_sum = torch.zeros((), device=device)
             val_n = 0
             for _, x, y in val_loader:
                 x, y = x.to(device), y.to(device)
                 y_pred, y_logvar = model(x)
                 bs = y.size(0)
-                val_nll_sum += criterion(y_pred, y, y_logvar).item() * bs
+                val_nll_sum += criterion(y_pred, y, y_logvar) * bs
                 val_n += bs
 
                 last_x = x[:, -1, :]
-                val_fd_baselines.append(fd(last_x, y, mu_t, sigma_t).cpu())
-                val_fd_preds.append(fd(y_pred, y, mu_t, sigma_t).cpu())
+                val_fd_baselines.append(fd(last_x, y, mu_t, sigma_t))
+                val_fd_preds.append(fd(y_pred, y, mu_t, sigma_t))
 
-            val_nll = val_nll_sum / val_n
             fd_baseline_cat = torch.cat(val_fd_baselines, dim=0)
             fd_model_cat = torch.cat(val_fd_preds, dim=0)
-
-            val_fd_pred = fd_model_cat.mean().item()
-            val_fdg = fd_gain(fd_baseline_cat, fd_model_cat).mean().item()
+            val_nll_t = val_nll_sum / val_n
+            val_fd_pred_t = fd_model_cat.mean()
+            val_fdg_t = fd_gain(fd_baseline_cat, fd_model_cat).mean()
+            # single GPU→host sync per epoch
+            val_nll, val_fd_pred, val_fdg = (
+                val_nll_t.item(),
+                val_fd_pred_t.item(),
+                val_fdg_t.item(),
+            )
             val_loss = val_nll - beta * val_fdg
 
         scheduler.step(val_loss)
@@ -127,34 +141,36 @@ def train(
                 "epoch": epoch + 1,
                 "train_ids": train_ids,
                 "val_ids": val_ids,
-                "test_dict": test_dict,
+                "test_ids": test_ids,
                 "mu": mu,
                 "sigma": sigma,
+                "beta": beta,
+                "train_task": train_task,
+                "test_task": test_task,
+                "epochs": epochs,
             }
-            torch.save(save_dict, checkpoint_path)
         else:
             early_counter += 1
             if early_counter >= patience:
                 break
 
+    torch.save(save_dict, checkpoint_path)
     return train_loss_history, val_loss_history
 
 
 if __name__ == "__main__":
-    train_task = "Resting"
-    test_task = "Memory"
+    train_task = "R"
+    test_task = "M"
     base_dir = "../datasets"
 
-    train_dict = np.load(
-        f"{base_dir}/{train_task}_task_dict.npy", allow_pickle=True
-    ).item()
-    val_and_test_dict = np.load(
-        f"{base_dir}/{test_task}_task_dict.npy", allow_pickle=True
+    train_dict = np.load(f"{base_dir}/{train_task}_dict.npy", allow_pickle=True).item()
+    val_test_dict = np.load(
+        f"{base_dir}/{test_task}_dict.npy", allow_pickle=True
     ).item()
 
     train_data = np.stack(list(train_dict.values()), axis=0)
     train_data_ids = list(train_dict.keys())
-    test_data = np.stack(list(val_and_test_dict.values()), axis=0)
+    test_data = np.stack(list(val_test_dict.values()), axis=0)
     num_patients = len(train_data)
 
     val_percent = 0.5
@@ -169,12 +185,12 @@ if __name__ == "__main__":
     test_patients = np.setdiff1d(np.arange(num_patients), val_patients)
 
     # Split val and test patient ids
-    val_patients_ids = [list(val_and_test_dict.keys())[i] for i in val_patients]
-    test_patients_ids = [list(val_and_test_dict.keys())[i] for i in test_patients]
+    val_patients_ids = [list(val_test_dict.keys())[i] for i in val_patients]
+    test_patients_ids = [list(val_test_dict.keys())[i] for i in test_patients]
 
     # save the dictionary of patient_id : data for the test set, to be saved in checkpoints
     # and used for testing after training
-    test_dict = {pid: val_and_test_dict[pid] for pid in test_patients_ids}
+    test_dict = {pid: val_test_dict[pid] for pid in test_patients_ids}
 
     # normalize the datasets using the mu and sigma of the training dataset (per dimension)
     mu = train_data.mean(axis=(0, 1))  # shape [6]
@@ -237,6 +253,7 @@ if __name__ == "__main__":
 
     os.makedirs("../checkpoints", exist_ok=True)
     epochs = 100
+    RUN_TAG = f"GRU_{train_task}v{test_task}_beta{beta}_ep{epochs}"
     train_loss_history, val_loss_history = train(
         model,
         train_loader,
@@ -250,7 +267,7 @@ if __name__ == "__main__":
         epochs=epochs,
         mu=mu,
         sigma=sigma,
-        checkpoint_path=f"../checkpoints/GRU_train{train_task}_test{test_task}_beta{beta}_ep{epochs}.pth",
+        checkpoint_path=f"../checkpoints/{RUN_TAG}.pth",
         patience=100,
         beta=beta,
     )
@@ -268,7 +285,5 @@ if __name__ == "__main__":
     )
     plt.legend()
     plt.grid()
-    plt.savefig(
-        f"../checkpoints/GRU_train{train_task}_test{test_task}_beta{beta}_ep{epochs}_loss_history.png"
-    )
+    plt.savefig(f"../checkpoints/{RUN_TAG}_loss_history.png")
     plt.show()

@@ -3,16 +3,13 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+
 from GRU import GRUModel
 from metrics import fd, fd_gain
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
 
 # Rotations are scaled by 50 mm (avg head radius) so every dim ends up in mm.
 DIM_NAMES = ["Tx (mm)", "Ty (mm)", "Tz (mm)", "Rx (mm)", "Ry (mm)", "Rz (mm)"]
-
-RESULTS_DIR = "results"
-MODEL_TAG = "GRU_trainResting_testMemory_beta0.5_ep100"
-os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
 def save(fig, name):
@@ -82,28 +79,42 @@ def test(model, test_loader, criterion, device, mu, sigma):
 ==================================================
 """
 
-# Load checkpoint + data
-saved_dict = torch.load(
-    "checkpoints/GRU_trainResting_testMemory_beta0.5_ep100.pth",
-    map_location="mps",
-    weights_only=False,
-)
-model_state_dict = saved_dict["model_state_dict"]
-test_dict = saved_dict["test_dict"]
-mu = saved_dict["mu"]
-sigma = saved_dict["sigma"]
+# Pick which checkpoint to evaluate. The tag fields (train_task, test_task,
+# beta, epochs) are read from inside the checkpoint, so this path is the only
+# thing to change between runs.
+CHECKPOINT_PATH = "checkpoints/GRU_RvM_beta0.5_ep100.pth"
 
 device = "cpu"
 
+# Load checkpoint + data
+saved_dict = torch.load(
+    CHECKPOINT_PATH,
+    map_location=device,
+    weights_only=False,
+)
+model_state_dict = saved_dict["model_state_dict"]
+test_ids = saved_dict["test_ids"]
+train_task = saved_dict["train_task"]
+test_task = saved_dict["test_task"]
+beta = saved_dict["beta"]
+epochs = saved_dict["epochs"]
+mu = saved_dict["mu"]
+sigma = saved_dict["sigma"]
+
+MODEL_TAG = f"GRU_{train_task}v{test_task}_beta{beta}_ep{epochs}"
+RESULTS_DIR = f"results/{MODEL_TAG}"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+
+test_dict = np.load(f"datasets/{test_task}_dict.npy", allow_pickle=True).item()
 
 test_data = np.array(
-    [test_dict[pid] for pid in test_dict.keys()]
+    [test_dict[pid] for pid in test_ids]
 )  # [num_patients, patient_frames, 6]
-test_patients_ids = np.array([pid for pid in test_dict.keys()])
 test_data = (test_data - mu) / sigma
 
 
-test_dataset = TimeSeriesDataset(test_data, test_patients_ids, device=device)
+test_dataset = TimeSeriesDataset(test_data, test_ids, device=device)
 test_loader = GPUBatchLoader(test_dataset, batch_size=1024, shuffle=False)
 
 model = GRUModel(
@@ -421,7 +432,7 @@ save(fig, "06_sigma_calibration")
 # 7) Random patient — time series with predictive uncertainty band
 # ==========================================================================================
 
-random_patient_id = list(test_dict.keys())[0]
+random_patient_id = test_ids[0]
 random_patient_data = test_dict[random_patient_id]
 normalized_random_patient_data = (random_patient_data - mu) / sigma
 

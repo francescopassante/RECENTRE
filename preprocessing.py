@@ -27,7 +27,7 @@ def load_data(data_paths):
     transforms degrees to radians for the last 3 columns and returns a dictionary
     where each patient is associated to his three tasks.
 
-    {"patient1": {"Resting": ..., "Memory": ..., "Language":...}, "patient2": {...}, ...}
+    {"patient1": {"R": ..., "M": ..., "L":...}, "patient2": {...}, ...}
 
     Also filter so that patients that do not have all three tasks are discarded.
 
@@ -35,9 +35,9 @@ def load_data(data_paths):
 
     # shapes holds the results of count_shapes(data_paths) (kept only the >99% shapes)
     shapes = {
-        "Resting": (1200, 6),
-        "Memory": (405, 6),
-        "Language": (316, 6),
+        "R": (1200, 6),
+        "M": (405, 6),
+        "L": (316, 6),
     }
 
     patient_dict = {}
@@ -77,9 +77,7 @@ def load_data(data_paths):
 
 def get_task_dict(patient_dict, task):
     """Returns a dictionary with {patient_id: data} where data is the time series of the specified task"""
-    assert task in ["Resting", "Memory", "Language"], (
-        f"Valid tasks: Resting, Memory or Language, got {task}"
-    )
+    assert task in ["R", "M", "L"], f"Valid tasks: R, M or L, got {task}"
     single_task_dict = {}
     for id, task_dict in patient_dict.items():
         single_task_dict[id] = patient_dict[id][task]
@@ -90,9 +88,9 @@ def get_task_dict(patient_dict, task):
 if __name__ == "__main__":
     # dictionary with the paths to the three datasets
     data_paths = {
-        "Resting": "../datasets/HCP/RestingStateLR_dataset",
-        "Memory": "../datasets/HCP/MemoryTaskLR_dataset",
-        "Language": "../datasets/HCP/LanguageTaskLR_dataset",
+        "R": "../datasets/HCP/RestingStateLR_dataset",
+        "M": "../datasets/HCP/MemoryTaskLR_dataset",
+        "L": "../datasets/HCP/LanguageTaskLR_dataset",
     }
 
     # # patient_dict holds complete patients (patients that have all the three tasks recorded)
@@ -100,5 +98,6 @@ if __name__ == "__main__":
     # # task_dicts has one dictionary for each task, with {patient_id: data}
     task_dicts = {task: get_task_dict(patient_dict, task) for task in data_paths.keys()}
     # save task_dicts to disk
+    os.makedirs("datasets", exist_ok=True)
     for task, task_dict in task_dicts.items():
-        np.save(f"{task}_task_dict.npy", task_dict)
+        np.save(f"datasets/{task}_dict.npy", task_dict)
