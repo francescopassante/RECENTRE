@@ -132,18 +132,12 @@ def train(
 
 if __name__ == "__main__":
     # dictionary with the paths to the three datasets
-    data_paths = {
-        "Resting": "../datasets/HCP/RestingStateLR_dataset",
-        "Memory": "../datasets/HCP/MemoryTaskLR_dataset",
-        "Language": "../datasets/HCP/LanguageTaskLR_dataset",
-    }
 
     train_task = "Resting"
     test_task = "Memory"
 
-    patient_dict = load_data(data_paths)
-    train_dict = get_task_dict(patient_dict, train_task)
-    val_and_test_dict = get_task_dict(patient_dict, test_task)
+    train_dict = np.load(f"{train_task}_task_dict.npy", allow_pickle=True).item()
+    val_and_test_dict = np.load(f"{test_task}_task_dict.npy", allow_pickle=True).item()
 
     train_data = np.stack(list(train_dict.values()), axis=0)
     train_data_ids = list(train_dict.keys())

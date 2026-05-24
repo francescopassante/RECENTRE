@@ -19,7 +19,6 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
 from GRU import GRUModel
 from metrics import fd, fd_gain
 from preprocessing import get_task_dict, load_data
@@ -45,9 +44,10 @@ def parse_beta(path):
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
-def evaluate(checkpoint_path, test_dict, device):
+def evaluate(checkpoint_path, device):
     sd = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    test_ids = sd["test_ids"]
+    test_dict = sd["test_dict"]  # {pid: patient_frames}
+    test_ids = list(test_dict.keys())
     mu = sd["mu"]
     sigma = sd["sigma"]
 
@@ -123,18 +123,13 @@ def evaluate(checkpoint_path, test_dict, device):
 # ---------------------------------------------------------------------------
 # Main: load data once, sweep over checkpoints
 # ---------------------------------------------------------------------------
-device = "mps" if torch.backends.mps.is_available() else (
-    "cuda" if torch.cuda.is_available() else "cpu"
+device = (
+    "mps"
+    if torch.backends.mps.is_available()
+    else ("cuda" if torch.cuda.is_available() else "cpu")
 )
 print(f"device: {device}")
 
-data_paths = {
-    "Resting": "../datasets/HCP/RestingStateLR_dataset",
-    "Memory": "../datasets/HCP/MemoryTaskLR_dataset",
-    "Language": "../datasets/HCP/LanguageTaskLR_dataset",
-}
-patient_dict = load_data(data_paths)
-test_dict = get_task_dict(patient_dict, "Memory")
 
 CHECKPOINT_DIR = "checkpoints"
 
@@ -149,7 +144,7 @@ per_run = defaultdict(list)  # β -> [run_result_dict, ...]
 for beta in sorted(by_beta.keys()):
     for path in by_beta[beta]:
         print(f"  β={beta:<6}  ({os.path.basename(path)})")
-        r = evaluate(path, test_dict, device)
+        r = evaluate(path, device)
         per_run[beta].append(r)
         if r["epoch"] < 50:
             print(f"    WARNING: epoch {r['epoch']} (under-trained?)")
@@ -158,8 +153,16 @@ for beta in sorted(by_beta.keys()):
 def aggregate(runs):
     """Combine per-run dicts: mean+std for scalars/per-dim, concat for distributions."""
     agg = {"n_runs": len(runs), "epochs": [r["epoch"] for r in runs]}
-    scalars = ["nll", "fd_base", "fd_pred", "fdg", "mae_total", "std_total",
-               "cov_1sigma", "cov_2sigma"]
+    scalars = [
+        "nll",
+        "fd_base",
+        "fd_pred",
+        "fdg",
+        "mae_total",
+        "std_total",
+        "cov_1sigma",
+        "cov_2sigma",
+    ]
     for k in scalars:
         v = np.array([r[k] for r in runs])
         agg[k] = float(v.mean())
@@ -211,9 +214,15 @@ ax.set_ylabel("Test NLL")
 ax.set_title("NLL — lower is better")
 
 ax = axes[0, 1]
-ax.errorbar(x, fd_pred, yerr=fd_pred_e, fmt="o-", color="blue", capsize=4, label="Model")
-ax.axhline(fd_base.mean(), linestyle="--", color="red",
-           label=f"Baseline ({fd_base.mean():.3f})")
+ax.errorbar(
+    x, fd_pred, yerr=fd_pred_e, fmt="o-", color="blue", capsize=4, label="Model"
+)
+ax.axhline(
+    fd_base.mean(),
+    linestyle="--",
+    color="red",
+    label=f"Baseline ({fd_base.mean():.3f})",
+)
 ax.set_xticks(x)
 ax.set_xticklabels(xlabels)
 ax.set_xlabel("β")
@@ -231,10 +240,18 @@ ax.set_ylabel("FD gain")
 ax.set_title("FD gain — higher is better")
 
 ax = axes[1, 1]
-ax.errorbar(x, mae_total, yerr=mae_total_e, fmt="o-", color="blue",
-            capsize=4, label="MAE")
-ax.errorbar(x, std_total, yerr=std_total_e, fmt="s--", color="red",
-            capsize=4, label="predicted σ")
+ax.errorbar(
+    x, mae_total, yerr=mae_total_e, fmt="o-", color="blue", capsize=4, label="MAE"
+)
+ax.errorbar(
+    x,
+    std_total,
+    yerr=std_total_e,
+    fmt="s--",
+    color="red",
+    capsize=4,
+    label="predicted σ",
+)
 ax.set_xticks(x)
 ax.set_xticklabels(xlabels)
 ax.set_xlabel("β")
@@ -254,14 +271,18 @@ cov1, cov1_e = cov1 * 100, cov1_e * 100
 cov2, cov2_e = cov2 * 100, cov2_e * 100
 
 fig, ax = plt.subplots(figsize=(9, 5))
-ax.errorbar(x, cov1, yerr=cov1_e, fmt="o-", color="blue", capsize=4,
-            label="±1σ coverage")
-ax.errorbar(x, cov2, yerr=cov2_e, fmt="o-", color="purple", capsize=4,
-            label="±2σ coverage")
-ax.axhline(68.27, linestyle="--", color="blue", alpha=0.5,
-           label="Gaussian target 68.27%")
-ax.axhline(95.45, linestyle="--", color="purple", alpha=0.5,
-           label="Gaussian target 95.45%")
+ax.errorbar(
+    x, cov1, yerr=cov1_e, fmt="o-", color="blue", capsize=4, label="±1σ coverage"
+)
+ax.errorbar(
+    x, cov2, yerr=cov2_e, fmt="o-", color="purple", capsize=4, label="±2σ coverage"
+)
+ax.axhline(
+    68.27, linestyle="--", color="blue", alpha=0.5, label="Gaussian target 68.27%"
+)
+ax.axhline(
+    95.45, linestyle="--", color="purple", alpha=0.5, label="Gaussian target 95.45%"
+)
 ax.set_xticks(x)
 ax.set_xticklabels(xlabels)
 ax.set_xlabel("β")
@@ -286,8 +307,15 @@ for ax, key, ylabel, title in zip(
     arr = np.stack([results[b][key] for b in betas], axis=0)  # (n_betas, 6)
     arr_e = np.stack([results[b][key + "_std"] for b in betas], axis=0)
     for d, name in enumerate(DIM_NAMES):
-        ax.errorbar(x, arr[:, d], yerr=arr_e[:, d], fmt="o-",
-                    color=dim_colors[d], capsize=3, label=name)
+        ax.errorbar(
+            x,
+            arr[:, d],
+            yerr=arr_e[:, d],
+            fmt="o-",
+            color=dim_colors[d],
+            capsize=3,
+            label=name,
+        )
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels)
     ax.set_xlabel("β")
@@ -312,8 +340,9 @@ ax = axes[0]
 ax.hist(base_fd, bins=bins, color="gray", alpha=0.4, label="Baseline")
 for b in betas:
     fdp = results[b]["fd_pred_arr"]
-    ax.hist(fdp, bins=bins, histtype="step", lw=1.5,
-            color=beta_color[b], label=f"β={b:g}")
+    ax.hist(
+        fdp, bins=bins, histtype="step", lw=1.5, color=beta_color[b], label=f"β={b:g}"
+    )
 ax.set_xlabel("framewise displacement (mm)")
 ax.set_ylabel("count")
 ax.set_title("FD distribution — model (per β) vs baseline")
@@ -321,14 +350,13 @@ ax.legend(fontsize=9)
 
 ax = axes[1]
 # per-sample FD gain — clip tails so the bulk is visible
-xlim = max(
-    np.percentile(np.abs(results[b]["fdg_per_sample"]), 99) for b in betas
-)
+xlim = max(np.percentile(np.abs(results[b]["fdg_per_sample"]), 99) for b in betas)
 bins_g = np.linspace(-xlim, xlim, 60)
 for b in betas:
     g = np.clip(results[b]["fdg_per_sample"], -xlim, xlim)
-    ax.hist(g, bins=bins_g, histtype="step", lw=1.5,
-            color=beta_color[b], label=f"β={b:g}")
+    ax.hist(
+        g, bins=bins_g, histtype="step", lw=1.5, color=beta_color[b], label=f"β={b:g}"
+    )
 ax.axvline(0, color="black", linestyle="--")
 ax.set_xlim(-xlim, xlim)
 ax.set_xlabel("FD gain (clipped to 1–99%)")
@@ -337,6 +365,7 @@ ax.set_title("Per-sample FD gain distribution per β")
 ax.legend(fontsize=9)
 fig.tight_layout()
 save(fig, "07_fd_distributions")
+
 
 # ---------------------------------------------------------------------------
 # 8) Summary table (all numbers in one figure)
@@ -350,30 +379,63 @@ def fmt(mean, std):
 
 fig, ax = plt.subplots(figsize=(14, 0.7 + 0.45 * len(betas)))
 ax.axis("off")
-header = ["β", "n runs", "epochs", "NLL", "FD base", "FD model", "FDg",
-          "MAE", "mean σ", "±1σ %", "±2σ %"]
+header = [
+    "β",
+    "n runs",
+    "epochs",
+    "NLL",
+    "FD base",
+    "FD model",
+    "FDg",
+    "MAE",
+    "mean σ",
+    "±1σ %",
+    "±2σ %",
+]
 rows = []
 for b in betas:
     r = results[b]
-    rows.append([
-        f"{b:g}",
-        f"{r['n_runs']}",
-        ", ".join(str(e) for e in r["epochs"]),
-        fmt(r["nll"], r["nll_std"]),
-        fmt(r["fd_base"], r["fd_base_std"]),
-        fmt(r["fd_pred"], r["fd_pred_std"]),
-        fmt(r["fdg"], r["fdg_std"]),
-        fmt(r["mae_total"], r["mae_total_std"]),
-        fmt(r["std_total"], r["std_total_std"]),
-        fmt(r["cov_1sigma"] * 100, r["cov_1sigma_std"] * 100),
-        fmt(r["cov_2sigma"] * 100, r["cov_2sigma_std"] * 100),
-    ])
+    rows.append(
+        [
+            f"{b:g}",
+            f"{r['n_runs']}",
+            ", ".join(str(e) for e in r["epochs"]),
+            fmt(r["nll"], r["nll_std"]),
+            fmt(r["fd_base"], r["fd_base_std"]),
+            fmt(r["fd_pred"], r["fd_pred_std"]),
+            fmt(r["fdg"], r["fdg_std"]),
+            fmt(r["mae_total"], r["mae_total_std"]),
+            fmt(r["std_total"], r["std_total_std"]),
+            fmt(r["cov_1sigma"] * 100, r["cov_1sigma_std"] * 100),
+            fmt(r["cov_2sigma"] * 100, r["cov_2sigma_std"] * 100),
+        ]
+    )
 
 tbl = ax.table(cellText=rows, colLabels=header, cellLoc="center", loc="center")
 tbl.auto_set_font_size(False)
 tbl.set_fontsize(10)
 tbl.scale(1, 1.4)
-fig.suptitle("β-sweep summary (mean ± std across runs)")
+
+# highlight the best β for each metric column (green cell)
+nll_vals = [results[b]["nll"] for b in betas]
+fd_pred_vals = [results[b]["fd_pred"] for b in betas]
+fdg_vals = [results[b]["fdg"] for b in betas]
+mae_vals = [results[b]["mae_total"] for b in betas]
+cov1_vals = [abs(results[b]["cov_1sigma"] * 100 - 68.27) for b in betas]
+cov2_vals = [abs(results[b]["cov_2sigma"] * 100 - 95.45) for b in betas]
+
+best = {
+    3: np.argmin(nll_vals),  # NLL — lower is better
+    5: np.argmin(fd_pred_vals),  # FD model — lower is better
+    6: np.argmax(fdg_vals),  # FD gain — higher is better
+    7: np.argmin(mae_vals),  # MAE — lower is better
+    9: np.argmin(cov1_vals),  # ±1σ % — closest to 68.27
+    10: np.argmin(cov2_vals),  # ±2σ % — closest to 95.45
+}
+for col, row in best.items():
+    tbl[(row + 1, col)].set_facecolor("lightgreen")
+
+fig.suptitle("β-sweep summary (mean ± std across runs; green = best per column)")
 fig.tight_layout()
 save(fig, "08_summary_table")
 

@@ -90,12 +90,15 @@ def get_task_dict(patient_dict, task):
 if __name__ == "__main__":
     # dictionary with the paths to the three datasets
     data_paths = {
-        "Resting": "RECENTRE-main/HCP/RestingStateLR_dataset",
-        "Memory": "RECENTRE-main/HCP/MemoryTaskLR_dataset",
-        "Language": "RECENTRE-main/HCP/LanguageTaskLR_dataset",
+        "Resting": "../datasets/HCP/RestingStateLR_dataset",
+        "Memory": "../datasets/HCP/MemoryTaskLR_dataset",
+        "Language": "../datasets/HCP/LanguageTaskLR_dataset",
     }
 
     # # patient_dict holds complete patients (patients that have all the three tasks recorded)
     patient_dict = load_data(data_paths)
     # # task_dicts has one dictionary for each task, with {patient_id: data}
     task_dicts = {task: get_task_dict(patient_dict, task) for task in data_paths.keys()}
+    # save task_dicts to disk
+    for task, task_dict in task_dicts.items():
+        np.save(f"{task}_task_dict.npy", task_dict)

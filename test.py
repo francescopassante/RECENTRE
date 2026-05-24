@@ -5,7 +5,6 @@ import numpy as np
 import torch
 from GRU import GRUModel
 from metrics import fd, fd_gain
-from preprocessing import get_task_dict, load_data
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
 
 # Rotations are scaled by 50 mm (avg head radius) so every dim ends up in mm.
@@ -89,12 +88,15 @@ test_dict = saved_dict["test_dict"]
 mu = saved_dict["mu"]
 sigma = saved_dict["sigma"]
 
-device = "mps"
+device = "cpu"
 
 
-test_data = np.concatenate(list(test_dict.values()), axis=0)
+test_data = np.array(
+    [test_dict[pid] for pid in test_dict.keys()]
+)  # [num_patients, patient_frames, 6]
 test_patients_ids = np.array([pid for pid in test_dict.keys()])
 test_data = (test_data - mu) / sigma
+
 
 test_dataset = TimeSeriesDataset(test_data, test_patients_ids, device=device)
 test_loader = GPUBatchLoader(test_dataset, batch_size=1024, shuffle=False)
@@ -122,6 +124,7 @@ pred_values = []
 baseline_values = []
 fd_per_patient_pred = []
 fd_per_patient_base = []
+fdg_per_patient = []
 
 for patient_id in patient_pred_true_base.keys():
     # shape [patient_frames, 6]
@@ -142,8 +145,15 @@ for patient_id in patient_pred_true_base.keys():
     scaled_true = p_true.copy()
     scaled_base = p_base.copy()
 
-    fd_per_patient_pred.append(np.abs(scaled_pred - scaled_true).sum(axis=1).mean())
-    fd_per_patient_base.append(np.abs(scaled_base - scaled_true).sum(axis=1).mean())
+    # scaled_pred: [patient_frames, 6]
+
+    fd_pred = np.abs(scaled_pred - scaled_true).sum(axis=1)
+    fd_base = np.abs(scaled_base - scaled_true).sum(axis=1)
+
+    fd_per_patient_pred.append(fd_pred.mean())
+    fd_per_patient_base.append(fd_base.mean())
+    fdg_per_patient.append(((fd_base - fd_pred) / fd_base).mean())
+
 
 # transform to np arrays
 true_values = np.concatenate(true_values, axis=0)  # [num_patients*patient_frames, 6]
@@ -151,7 +161,7 @@ pred_values = np.concatenate(pred_values, axis=0)
 baseline_values = np.concatenate(baseline_values, axis=0)
 fd_per_patient_pred = np.array(fd_per_patient_pred)  # [num_patients]
 fd_per_patient_base = np.array(fd_per_patient_base)
-fdg_per_patient = (fd_per_patient_base - fd_per_patient_pred) / fd_per_patient_base
+fdg_per_patient = np.array(fdg_per_patient)
 
 # compute model and baseline errors for MAE and RMSE
 err_pred = pred_values - true_values
@@ -190,7 +200,7 @@ for ax, metric_base, metric_model, label in zip(
     ax.set_title(f"{label} per dimension (below y=x means model is better)")
     ax.legend()
 fig.tight_layout()
-save(fig, "error_per_dimension")
+save(fig, "01_error_per_dimension")
 
 
 # ==========================================================================================
@@ -211,9 +221,12 @@ for d, ax in enumerate(axes.flat):
     ax.set_title(DIM_NAMES[d])
     ax.legend(fontsize=8)
 fig.tight_layout()
-save(fig, "true_vs_predicted")
+save(fig, "02_true_vs_predicted")
 
+# ==========================================================================================
 # 3) Framewise-displacement (FD) distribution — model vs baseline
+# ==========================================================================================
+
 fd_pred_arr = metrics["fd_pred_per_sample"]
 fd_base_arr = metrics["fd_base_per_sample"]
 
@@ -263,9 +276,12 @@ ax.set_ylabel("count")
 ax.set_title(f"Per-sample FD gain — {pos:.1f}% of samples improved")
 ax.legend()
 fig.tight_layout()
-save(fig, "fd_distribution")
+save(fig, "03_fd_distribution")
 
+# ==========================================================================================
 # 4) Per-patient FD gain — sorted bar chart + baseline vs model FD scatter
+# ==========================================================================================
+
 order = np.argsort(fdg_per_patient)
 sorted_fdg = fdg_per_patient[order]
 colors = ["blue" if v >= 0 else "red" for v in sorted_fdg]
@@ -298,9 +314,13 @@ ax.set_ylabel("Model FD (per patient)")
 ax.set_title("Per-patient baseline vs model FD (below y=x ⇒ model improves)")
 ax.legend()
 fig.tight_layout()
-save(fig, "per_patient_fdg")
+save(fig, "04_per_patient_fdg")
 
+
+# ==========================================================================================
 # 5) Metrics summary card
+# ==========================================================================================
+
 total_mae_pred = np.abs(err_pred).mean()
 total_mae_base = np.abs(err_base).mean()
 total_rmse_pred = np.sqrt((err_pred**2).mean())
@@ -349,11 +369,14 @@ tbl = ax.table(
 )
 tbl.auto_set_font_size(False)
 tbl.set_fontsize(10)
-save(fig, "metrics_summary")
+save(fig, "05_metrics_summary")
 
 
-# Now we look at a single patient
-random_patient_id = list(patient_pred_true_base.keys())[0]
+# ==========================================================================================
+# 6) Random patient — time series with predictive uncertainty band
+# ==========================================================================================
+
+random_patient_id = list(test_dict.keys())[0]
 random_patient_data = test_dict[random_patient_id]
 normalized_random_patient_data = (random_patient_data - mu) / sigma
 
@@ -363,7 +386,7 @@ random_patient_dataset = TimeSeriesDataset(
     device=device,
 )
 random_patient_loader = torch.utils.data.DataLoader(
-    random_patient_dataset, batch_size=1, shuffle=False
+    random_patient_dataset, batch_size=16, shuffle=False
 )
 predicted_positions = []
 true_positions = []
@@ -384,6 +407,7 @@ true_positions = np.concatenate(true_positions, axis=0)
 predicted_positions = np.concatenate(predicted_positions, axis=0)
 baseline_positions = np.concatenate(baseline_positions, axis=0)
 pred_vars = np.concatenate(pred_vars, axis=0)
+
 # uncertainty band in denormalized units
 pred_std = np.sqrt(pred_vars) * sigma
 
@@ -393,7 +417,7 @@ predicted_positions[:, 3:6] *= 50
 baseline_positions[:, 3:6] *= 50
 pred_std[:, 3:6] *= 50
 
-# 6) Single patient — time series with predictive uncertainty band
+
 fig, axes = plt.subplots(2, 3, figsize=(14, 8))
 fig.suptitle(f"Predicted vs True per dimension — patient {random_patient_id}")
 t_axis = np.arange(true_positions.shape[0])
