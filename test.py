@@ -27,6 +27,7 @@ def test(model, test_loader, criterion, device, mu, sigma):
     test_fd_baselines = []
     test_fd_preds = []
     test_nll = 0
+    z_all = []
     patient_pred_true_base = {
         p: {"pred": [], "true": [], "baseline": []} for p in test_loader.dataset.ids
     }
@@ -38,6 +39,9 @@ def test(model, test_loader, criterion, device, mu, sigma):
             # GRU.forward returns (mean, variance) — already exp'd inside the model.
             y_pred, y_var = model(x)
             test_nll += criterion(y_pred, y, y_var).item()
+
+            # standardized residual in normalized space (scale-invariant)
+            z_all.append(((y - y_pred) / torch.sqrt(y_var)).cpu().numpy())
 
             last_x = x[:, -1, :]
             test_fd_baselines.append(fd(last_x, y, mu, sigma).cpu())
@@ -67,6 +71,7 @@ def test(model, test_loader, criterion, device, mu, sigma):
         "fdg": fd_gain(fd_baseline_cat, fd_model_cat).mean().item(),
         "fd_pred_per_sample": fd_model_cat.numpy(),
         "fd_base_per_sample": fd_baseline_cat.numpy(),
+        "z_per_sample": np.concatenate(z_all, axis=0),
     }
     return patient_pred_true_base, metrics
 
@@ -373,7 +378,47 @@ save(fig, "05_metrics_summary")
 
 
 # ==========================================================================================
-# 6) Random patient — time series with predictive uncertainty band
+# 6) Predicted-sigma calibration — standardized residuals z = (y − μ_pred) / σ_pred
+# ==========================================================================================
+# If σ_pred is well-calibrated, z should be ~ N(0, 1) per dimension.
+#   empirical std(z) > 1  ⇒  model is overconfident (σ_pred too small)
+#   empirical std(z) < 1  ⇒  model is underconfident (σ_pred too large)
+#   reduced χ² = mean(z²) should be ≈ 1
+z = metrics["z_per_sample"]  # [N, 6], in normalized space (scale-invariant)
+
+fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+fig.suptitle(
+    "Predicted-σ calibration — standardized residuals z = (y − μ_pred) / σ_pred"
+)
+zz = np.linspace(-5, 5, 400)
+gauss_pdf = np.exp(-0.5 * zz**2) / np.sqrt(2 * np.pi)
+for d, ax in enumerate(axes.flat):
+    zd = z[:, d]
+    # clip extreme tails for the histogram view
+    zd_clip = np.clip(zd, -5, 5)
+    ax.hist(zd_clip, bins=80, density=True, color="blue", alpha=0.5, label="empirical")
+    ax.plot(zz, gauss_pdf, "k--", label="N(0, 1)")
+    mean_z = zd.mean()
+    std_z = zd.std()
+    chi2_red = (zd**2).mean()
+    cov68 = (np.abs(zd) <= 1.0).mean() * 100  # should be ~68.3% if calibrated
+    cov95 = (np.abs(zd) <= 2.0).mean() * 100  # should be ~95.4%
+    ax.set_title(
+        f"{DIM_NAMES[d]}   mean={mean_z:.2f}  std={std_z:.2f}  χ²ᵣ={chi2_red:.2f}\n"
+        f"|z|≤1: {cov68:.1f}%   |z|≤2: {cov95:.1f}%",
+        fontsize=9,
+    )
+    ax.set_xlabel("z")
+    ax.set_ylabel("density")
+    ax.set_xlim(-5, 5)
+    if d == 0:
+        ax.legend(fontsize=8)
+fig.tight_layout()
+save(fig, "06_sigma_calibration")
+
+
+# ==========================================================================================
+# 7) Random patient — time series with predictive uncertainty band
 # ==========================================================================================
 
 random_patient_id = list(test_dict.keys())[0]
@@ -427,16 +472,18 @@ for d, ax in enumerate(axes.flat):
         predicted_positions[:, d] - pred_std[:, d],
         predicted_positions[:, d] + pred_std[:, d],
         color="blue",
-        alpha=0.2,
+        alpha=0.3,
         label="±1σ",
     )
     ax.plot(t_axis, true_positions[:, d], color="green", label="True")
-    ax.plot(t_axis, predicted_positions[:, d], color="blue", label="Predicted")
-    ax.plot(t_axis, baseline_positions[:, d], color="red", label="Baseline")
+    ax.plot(
+        t_axis, predicted_positions[:, d], color="blue", label="Predicted", alpha=0.1
+    )
+    ax.plot(t_axis, baseline_positions[:, d], color="red", label="Baseline", alpha=0.1)
     ax.set_xlabel("Time step")
     ax.set_ylabel(DIM_NAMES[d])
     ax.set_title(DIM_NAMES[d])
     if d == 0:
         ax.legend(fontsize=8)
 fig.tight_layout()
-save(fig, "patient_timeseries")
+save(fig, "07_patient_timeseries")
