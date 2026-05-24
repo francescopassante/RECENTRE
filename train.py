@@ -267,7 +267,7 @@ if __name__ == "__main__":
         f"Train and Val Loss - GRU train {train_task} test {test_task} beta {beta}"
     )
     plt.legend()
-    plt.grid()()
+    plt.grid()
     plt.savefig(
         f"../checkpoints/GRU_train{train_task}_test{test_task}_beta{beta}_ep{epochs}_loss_history.png"
     )
