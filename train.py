@@ -42,7 +42,11 @@ def train(
     early_counter = 0
     pbar = tqdm.trange(epochs)
     for epoch in pbar:
-        train_loss = 0
+        # accumulate sample-weighted NLL so the reported per-sample mean is
+        # correct even when the last batch is smaller than the rest, and
+        # consistent with the sample-weighted FDg computed below.
+        train_nll_sum = 0.0
+        train_n = 0
         train_fd_baselines = []
         train_fd_preds = []
         model.train()
@@ -60,31 +64,37 @@ def train(
             loss = nll - beta * gain.mean()
             loss.backward()
             optimizer.step()
-            train_loss += loss.item()
+            bs = y.size(0)
+            train_nll_sum += nll.item() * bs
+            train_n += bs
             train_fd_baselines.append(fd_baseline.detach().cpu())
             train_fd_preds.append(fd_pred.detach().cpu())
 
-        train_loss /= len(train_loader)
+        train_nll = train_nll_sum / train_n
         train_fd_baseline_cat = torch.cat(train_fd_baselines, dim=0)
         train_fd_pred_cat = torch.cat(train_fd_preds, dim=0)
         train_fdg = fd_gain(train_fd_baseline_cat, train_fd_pred_cat).mean().item()
         train_fd_pred = train_fd_pred_cat.mean().item()
+        train_loss = train_nll - beta * train_fdg
 
         model.eval()
         with torch.no_grad():
             val_fd_baselines = []
             val_fd_preds = []
-            val_nll = 0
+            val_nll_sum = 0.0
+            val_n = 0
             for _, x, y in val_loader:
                 x, y = x.to(device), y.to(device)
                 y_pred, y_logvar = model(x)
-                val_nll += criterion(y_pred, y, y_logvar).item()
+                bs = y.size(0)
+                val_nll_sum += criterion(y_pred, y, y_logvar).item() * bs
+                val_n += bs
 
                 last_x = x[:, -1, :]
                 val_fd_baselines.append(fd(last_x, y, mu_t, sigma_t).cpu())
                 val_fd_preds.append(fd(y_pred, y, mu_t, sigma_t).cpu())
 
-            val_nll /= len(val_loader)
+            val_nll = val_nll_sum / val_n
             fd_baseline_cat = torch.cat(val_fd_baselines, dim=0)
             fd_model_cat = torch.cat(val_fd_preds, dim=0)
 
@@ -224,7 +234,7 @@ if __name__ == "__main__":
 
     os.makedirs("../checkpoints", exist_ok=True)
     epochs = 100
-    train(
+    train_loss_history, val_loss_history = train(
         model,
         train_loader,
         val_loader,
@@ -241,3 +251,21 @@ if __name__ == "__main__":
         patience=100,
         beta=beta,
     )
+
+    # train and val loss history plots:
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_loss_history, label="Train Loss")
+    plt.plot(val_loss_history, label="Val Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title(
+        f"Train and Val Loss - GRU train {train_task} test {test_task} beta {beta}"
+    )
+    plt.legend()
+    plt.grid()()
+    plt.savefig(
+        f"../checkpoints/GRU_train{train_task}_test{test_task}_beta{beta}_ep{epochs}_loss_history.png"
+    )
+    plt.show()

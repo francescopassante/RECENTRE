@@ -475,7 +475,7 @@ for d, ax in enumerate(axes.flat):
         alpha=0.3,
         label="±1σ",
     )
-    ax.plot(t_axis, true_positions[:, d], color="green", label="True")
+    ax.plot(t_axis, true_positions[:, d], color="black", label="True", alpha=0.5)
     ax.plot(
         t_axis, predicted_positions[:, d], color="blue", label="Predicted", alpha=0.1
     )
