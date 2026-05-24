@@ -4,11 +4,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import tqdm
+from torch.utils.data import DataLoader
+
 from GRU import GRUModel
 from metrics import fd, fd_gain
-from preprocessing import get_task_dict, load_data
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
-from torch.utils.data import DataLoader
 
 
 def train(
@@ -141,13 +141,16 @@ def train(
 
 
 if __name__ == "__main__":
-    # dictionary with the paths to the three datasets
-
     train_task = "Resting"
     test_task = "Memory"
+    base_dir = "../datasets"
 
-    train_dict = np.load(f"{train_task}_task_dict.npy", allow_pickle=True).item()
-    val_and_test_dict = np.load(f"{test_task}_task_dict.npy", allow_pickle=True).item()
+    train_dict = np.load(
+        f"{base_dir}/{train_task}_task_dict.npy", allow_pickle=True
+    ).item()
+    val_and_test_dict = np.load(
+        f"{base_dir}/{test_task}_task_dict.npy", allow_pickle=True
+    ).item()
 
     train_data = np.stack(list(train_dict.values()), axis=0)
     train_data_ids = list(train_dict.keys())
@@ -230,7 +233,7 @@ if __name__ == "__main__":
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     criterion = nn.GaussianNLLLoss()
-    beta = 0.1
+    beta = 0.5
 
     os.makedirs("../checkpoints", exist_ok=True)
     epochs = 100

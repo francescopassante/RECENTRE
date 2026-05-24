@@ -20,8 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from GRU import GRUModel
-from metrics import fd, fd_gain
-from preprocessing import get_task_dict, load_data
+from metrics import fd
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
 
 DIM_NAMES = ["Tx (mm)", "Ty (mm)", "Tz (mm)", "Rx (mm)", "Ry (mm)", "Rz (mm)"]
@@ -294,7 +293,7 @@ fig.tight_layout()
 save(fig, "02_calibration_vs_beta")
 
 # ---------------------------------------------------------------------------
-# 5) Per-dimension MAE & predicted σ vs β
+# 3) Per-dimension MAE & predicted σ vs β
 # ---------------------------------------------------------------------------
 fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 dim_colors = ["red", "orange", "green", "blue", "purple", "brown"]
@@ -323,10 +322,10 @@ for ax, key, ylabel, title in zip(
     ax.set_title(title)
     ax.legend(fontsize=8)
 fig.tight_layout()
-save(fig, "05_per_dim_curves")
+save(fig, "03_per_dim_curves")
 
 # ---------------------------------------------------------------------------
-# 7) FD distribution per β (overlaid)
+# 4) FD distribution per β (overlaid)
 # ---------------------------------------------------------------------------
 beta_colors = ["blue", "green", "orange", "red", "purple", "brown", "black"]
 beta_color = {b: beta_colors[i % len(beta_colors)] for i, b in enumerate(betas)}
@@ -364,11 +363,11 @@ ax.set_ylabel("count")
 ax.set_title("Per-sample FD gain distribution per β")
 ax.legend(fontsize=9)
 fig.tight_layout()
-save(fig, "07_fd_distributions")
+save(fig, "04_fd_distributions")
 
 
 # ---------------------------------------------------------------------------
-# 8) Summary table (all numbers in one figure)
+# 5) Summary table (all numbers in one figure)
 # ---------------------------------------------------------------------------
 def fmt(mean, std):
     """Format as 'mean ± std', or just 'mean' if single-run."""
@@ -437,6 +436,6 @@ for col, row in best.items():
 
 fig.suptitle("β-sweep summary (mean ± std across runs; green = best per column)")
 fig.tight_layout()
-save(fig, "08_summary_table")
+save(fig, "05_summary_table")
 
 print("\ndone — outputs in", RESULTS_DIR)
