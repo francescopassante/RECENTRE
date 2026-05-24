@@ -45,6 +45,10 @@ def parse_beta(path):
 # ---------------------------------------------------------------------------
 def evaluate(checkpoint_path, device):
     sd = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    fname_beta = parse_beta(checkpoint_path)
+    assert fname_beta == sd["beta"], (
+        f"filename β={fname_beta} does not match checkpoint β={sd['beta']} in {checkpoint_path}"
+    )
     test_dict = sd["test_dict"]  # {pid: patient_frames}
     test_ids = list(test_dict.keys())
     mu = sd["mu"]

@@ -3,7 +3,6 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
 from GRU import GRUModel
 from metrics import fd, fd_gain
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
@@ -13,7 +12,7 @@ DIM_NAMES = ["Tx (mm)", "Ty (mm)", "Tz (mm)", "Rx (mm)", "Ry (mm)", "Rz (mm)"]
 
 
 def save(fig, name):
-    path = os.path.join(RESULTS_DIR, f"{name}_{MODEL_TAG}.png")
+    path = os.path.join(RESULTS_DIR, f"{name}_{TAG}.png")
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"saved {path}")
@@ -82,7 +81,8 @@ def test(model, test_loader, criterion, device, mu, sigma):
 # Pick which checkpoint to evaluate. The tag fields (train_task, test_task,
 # beta, epochs) are read from inside the checkpoint, so this path is the only
 # thing to change between runs.
-CHECKPOINT_PATH = "checkpoints/GRU_RvM_beta0.5_ep100.pth"
+FILENAME = "GRU_RvM_beta0.5_ep100.pth"
+CHECKPOINT_PATH = f"checkpoints/{FILENAME}"
 
 device = "cpu"
 
@@ -101,8 +101,13 @@ epochs = saved_dict["epochs"]
 mu = saved_dict["mu"]
 sigma = saved_dict["sigma"]
 
-MODEL_TAG = f"GRU_{train_task}v{test_task}_beta{beta}_ep{epochs}"
-RESULTS_DIR = f"results/{MODEL_TAG}"
+assert FILENAME == f"GRU_{train_task}v{test_task}_beta{beta}_ep{epochs}.pth", (
+    "FILENAME does not match checkpoint contents. Please update the filename variable to match the checkpoint you want to evaluate."
+)
+
+
+TAG = FILENAME.removesuffix(".pth")
+RESULTS_DIR = f"results/{TAG}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
@@ -344,7 +349,7 @@ total_rmse_base = np.sqrt((err_base**2).mean())
 
 fig, ax = plt.subplots(figsize=(11, 6))
 ax.axis("off")
-fig.suptitle(f"Test summary — {MODEL_TAG}")
+fig.suptitle(f"Test summary — {TAG}")
 
 headline = (
     f"NLL = {metrics['nll']:.4f}     "
