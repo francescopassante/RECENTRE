@@ -4,11 +4,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import tqdm
-from torch.utils.data import DataLoader
-
 from GRU import GRUModel
 from metrics import fd, fd_gain
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
+from torch.utils.data import DataLoader
 
 
 def train(
@@ -213,7 +212,7 @@ if __name__ == "__main__":
         test_data[test_patients], test_patients_ids, device=dataset_device
     )
 
-    batch_size = 8192
+    batch_size = 32768
 
     if use_gpu_loader:
         train_loader = GPUBatchLoader(
