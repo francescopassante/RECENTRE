@@ -84,6 +84,11 @@ def test(model, test_loader, criterion, device, mu, sigma):
 FILENAME = "GRU_LvM_beta0.5_ep100.pth"
 CHECKPOINT_PATH = f"checkpoints/cross_task/{FILENAME}"
 
+# Which task to evaluate on. Set to None for old per-task checkpoints (the
+# script will fall back to the checkpoint's saved test_task). For generalist
+# checkpoints (which have no fixed test_task) this MUST be one of "R", "M", "L".
+TEST_TASK = None
+
 device = "cpu"
 
 # Load checkpoint + data
@@ -94,19 +99,31 @@ saved_dict = torch.load(
 )
 model_state_dict = saved_dict["model_state_dict"]
 test_ids = saved_dict["test_ids"]
-train_task = saved_dict["train_task"]
-test_task = saved_dict["test_task"]
 beta = saved_dict["beta"]
 epochs = saved_dict["epochs"]
 mu = saved_dict["mu"]
 sigma = saved_dict["sigma"]
 
-assert FILENAME == f"GRU_{train_task}v{test_task}_beta{beta}_ep{epochs}.pth", (
-    "FILENAME does not match checkpoint contents. Please update the filename variable to match the checkpoint you want to evaluate."
-)
+is_generalist = "tasks" in saved_dict
+if is_generalist:
+    assert TEST_TASK is not None, (
+        "Generalist checkpoint has no fixed test_task — set TEST_TASK to 'R', 'M', or 'L'."
+    )
+    test_task = TEST_TASK
+    train_task = "+".join(saved_dict["tasks"])  # purely cosmetic, for the tag
+else:
+    train_task = saved_dict["train_task"]
+    test_task = TEST_TASK if TEST_TASK is not None else saved_dict["test_task"]
+    expected = f"GRU_{train_task}v{saved_dict['test_task']}_beta{beta}_ep{epochs}.pth"
+    assert FILENAME == expected, (
+        "FILENAME does not match checkpoint contents. Please update the filename variable to match the checkpoint you want to evaluate."
+    )
 
 
 TAG = FILENAME.removesuffix(".pth")
+if is_generalist or TEST_TASK is not None:
+    # disambiguate results dir when one checkpoint is evaluated on multiple tasks
+    TAG = f"{TAG}_on{test_task}"
 RESULTS_DIR = f"results/{TAG}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 

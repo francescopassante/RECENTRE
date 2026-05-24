@@ -79,3 +79,34 @@ class GPUBatchLoader:
             y = ds.data[p, t + ds.time_span - 1, :]
             ids_b = [ds.ids[i] for i in p.tolist()]
             yield ids_b, x, y
+
+
+class MultiTaskLoader:
+    """Mixes batches from several per-task loaders into one epoch.
+
+    Each underlying loader handles its own intra-task shuffling and gather;
+    this wrapper just decides which loader to draw the next batch from. With
+    shuffle=True the per-step task identity is random, so each gradient step
+    sees a single-task batch but consecutive steps cover all tasks.
+    """
+
+    def __init__(self, loaders, shuffle=True, seed=None):
+        self.loaders = list(loaders)
+        self.shuffle = shuffle
+        self._gen = torch.Generator()
+        if seed is not None:
+            self._gen.manual_seed(seed)
+
+    def __len__(self):
+        return sum(len(l) for l in self.loaders)
+
+    def __iter__(self):
+        schedule = torch.cat(
+            [torch.full((len(l),), i, dtype=torch.long) for i, l in enumerate(self.loaders)]
+        )
+        if self.shuffle:
+            perm = torch.randperm(schedule.numel(), generator=self._gen)
+            schedule = schedule[perm]
+        iters = [iter(l) for l in self.loaders]
+        for i in schedule.tolist():
+            yield next(iters[i])
