@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+
 from GRU import GRUModel
 from metrics import fd, fd_gain
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
@@ -24,9 +25,7 @@ def test(model, test_loader, criterion, device, mu, sigma):
     test_fd_preds = []
     test_nll = 0
     z_all = []
-    patient_pred_true_base = {
-        p: {"pred": [], "true": [], "baseline": []} for p in test_loader.dataset.ids
-    }
+    patient_pred_true_base = {p: {"pred": [], "true": [], "baseline": []} for p in test_loader.dataset.ids}
     mu = torch.tensor(mu, dtype=torch.float32, device=device)
     sigma = torch.tensor(sigma, dtype=torch.float32, device=device)
     with torch.no_grad():
@@ -46,15 +45,9 @@ def test(model, test_loader, criterion, device, mu, sigma):
                 denormalized_pred = y_pred[i] * sigma + mu
                 denormalized_true = y[i] * sigma + mu
                 denormalized_baseline = last_x[i] * sigma + mu
-                patient_pred_true_base[p[i]]["pred"].append(
-                    denormalized_pred.cpu().numpy()
-                )
-                patient_pred_true_base[p[i]]["true"].append(
-                    denormalized_true.cpu().numpy()
-                )
-                patient_pred_true_base[p[i]]["baseline"].append(
-                    denormalized_baseline.cpu().numpy()
-                )
+                patient_pred_true_base[p[i]]["pred"].append(denormalized_pred.cpu().numpy())
+                patient_pred_true_base[p[i]]["true"].append(denormalized_true.cpu().numpy())
+                patient_pred_true_base[p[i]]["baseline"].append(denormalized_baseline.cpu().numpy())
 
     test_nll /= len(test_loader)
     fd_baseline_cat = torch.cat(test_fd_baselines, dim=0)
@@ -78,16 +71,14 @@ def test(model, test_loader, criterion, device, mu, sigma):
 ==================================================
 """
 
-# Pick which checkpoint to evaluate. The tag fields (train_task, test_task,
-# beta, epochs) are read from inside the checkpoint, so this path is the only
-# thing to change between runs.
-FILENAME = "GRU_LvM_beta0.5_ep100.pth"
-CHECKPOINT_PATH = f"checkpoints/cross_task/{FILENAME}"
+# Pick which checkpoint to evaluate
+FILENAME = "GRU_bestgeneralist_beta0.5_ep100.pth"
+CHECKPOINT_PATH = f"checkpoints/best_generalist/{FILENAME}"
 
-# Which task to evaluate on. Set to None for old per-task checkpoints (the
-# script will fall back to the checkpoint's saved test_task). For generalist
-# checkpoints (which have no fixed test_task) this MUST be one of "R", "M", "L".
-TEST_TASK = None
+# Which task to evaluate on.
+# None for cross task testing (test_task is written in the checkpoint)
+
+TEST_TASK = "L"
 
 device = "cpu"
 
@@ -106,9 +97,7 @@ sigma = saved_dict["sigma"]
 
 is_generalist = "tasks" in saved_dict
 if is_generalist:
-    assert TEST_TASK is not None, (
-        "Generalist checkpoint has no fixed test_task — set TEST_TASK to 'R', 'M', or 'L'."
-    )
+    assert TEST_TASK is not None, "Generalist checkpoint has no fixed test_task — set TEST_TASK to 'R', 'M', or 'L'."
     test_task = TEST_TASK
     train_task = "+".join(saved_dict["tasks"])  # purely cosmetic, for the tag
 else:
@@ -130,24 +119,18 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 test_dict = np.load(f"datasets/{test_task}_dict.npy", allow_pickle=True).item()
 
-test_data = np.array(
-    [test_dict[pid] for pid in test_ids]
-)  # [num_patients, patient_frames, 6]
+test_data = np.array([test_dict[pid] for pid in test_ids])  # [num_patients, patient_frames, 6]
 test_data = (test_data - mu) / sigma
 
 
 test_dataset = TimeSeriesDataset(test_data, test_ids, device=device)
 test_loader = GPUBatchLoader(test_dataset, batch_size=1024, shuffle=False)
 
-model = GRUModel(
-    input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5
-).to(device)
+model = GRUModel(input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5).to(device)
 model.load_state_dict(model_state_dict)
 criterion = torch.nn.GaussianNLLLoss()
 
-patient_pred_true_base, metrics = test(
-    model, test_loader, criterion, device, mu=mu, sigma=sigma
-)
+patient_pred_true_base, metrics = test(model, test_loader, criterion, device, mu=mu, sigma=sigma)
 
 
 """
@@ -339,9 +322,7 @@ ax.axhline(
 )
 ax.set_xlabel("Patient (sorted by FD gain)")
 ax.set_ylabel("FD gain")
-ax.set_title(
-    f"Per-patient FD gain — {(fdg_per_patient > 0).mean() * 100:.1f}% of patients improved"
-)
+ax.set_title(f"Per-patient FD gain — {(fdg_per_patient > 0).mean() * 100:.1f}% of patients improved")
 ax.legend()
 
 ax = axes[1]
@@ -423,9 +404,7 @@ save(fig, "05_metrics_summary")
 z = metrics["z_per_sample"]  # [N, 6], in normalized space (scale-invariant)
 
 fig, axes = plt.subplots(2, 3, figsize=(14, 8))
-fig.suptitle(
-    "Predicted-σ calibration — standardized residuals z = (y − μ_pred) / σ_pred"
-)
+fig.suptitle("Predicted-σ calibration — standardized residuals z = (y − μ_pred) / σ_pred")
 zz = np.linspace(-5, 5, 400)
 gauss_pdf = np.exp(-0.5 * zz**2) / np.sqrt(2 * np.pi)
 for d, ax in enumerate(axes.flat):
@@ -440,8 +419,7 @@ for d, ax in enumerate(axes.flat):
     cov68 = (np.abs(zd) <= 1.0).mean() * 100  # should be ~68.3% if calibrated
     cov95 = (np.abs(zd) <= 2.0).mean() * 100  # should be ~95.4%
     ax.set_title(
-        f"{DIM_NAMES[d]}   mean={mean_z:.2f}  std={std_z:.2f}  χ²ᵣ={chi2_red:.2f}\n"
-        f"|z|≤1: {cov68:.1f}%   |z|≤2: {cov95:.1f}%",
+        f"{DIM_NAMES[d]}   mean={mean_z:.2f}  std={std_z:.2f}  χ²ᵣ={chi2_red:.2f}\n|z|≤1: {cov68:.1f}%   |z|≤2: {cov95:.1f}%",
         fontsize=9,
     )
     ax.set_xlabel("z")
@@ -466,9 +444,7 @@ random_patient_dataset = TimeSeriesDataset(
     [random_patient_id],
     device=device,
 )
-random_patient_loader = torch.utils.data.DataLoader(
-    random_patient_dataset, batch_size=16, shuffle=False
-)
+random_patient_loader = torch.utils.data.DataLoader(random_patient_dataset, batch_size=16, shuffle=False)
 predicted_positions = []
 true_positions = []
 baseline_positions = []
@@ -512,9 +488,7 @@ for d, ax in enumerate(axes.flat):
         label="±1σ",
     )
     ax.plot(t_axis, true_positions[:, d], color="black", label="True", alpha=0.5)
-    ax.plot(
-        t_axis, predicted_positions[:, d], color="blue", label="Predicted", alpha=0.1
-    )
+    ax.plot(t_axis, predicted_positions[:, d], color="blue", label="Predicted", alpha=0.1)
     ax.plot(t_axis, baseline_positions[:, d], color="red", label="Baseline", alpha=0.1)
     ax.set_xlabel("Time step")
     ax.set_ylabel(DIM_NAMES[d])

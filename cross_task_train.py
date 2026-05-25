@@ -4,10 +4,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import tqdm
+from torch.utils.data import DataLoader
+
 from GRU import GRUModel
 from metrics import fd, fd_gain
 from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
-from torch.utils.data import DataLoader
 
 
 def train(
@@ -27,9 +28,7 @@ def train(
     patience=10,
     beta=0.1,
 ):
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=10
-    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
     # mu/sigma as tensors on device for FD denormalization
     mu_t = torch.tensor(mu, dtype=torch.float32, device=device)
     sigma_t = torch.tensor(sigma, dtype=torch.float32, device=device)
@@ -43,10 +42,7 @@ def train(
     pbar = tqdm.trange(epochs)
     for epoch in pbar:
         # accumulate sample-weighted NLL so the reported per-sample mean is
-        # correct even when the last batch is smaller than the rest, and
-        # consistent with the sample-weighted FDg computed below. Keep
-        # accumulators on the GPU and sync once at epoch end — per-batch
-        # .item()/.cpu() calls were forcing a GPU→host stall every step.
+        # correct even when the last batch is smaller than the rest
         train_nll_sum = torch.zeros((), device=device)
         train_n = 0
         train_fd_baselines = []
@@ -77,7 +73,7 @@ def train(
         train_fdg_t = fd_gain(train_fd_baseline_cat, train_fd_pred_cat).mean()
         train_fd_pred_t = train_fd_pred_cat.mean()
         train_nll_t = train_nll_sum / train_n
-        # single GPU→host sync per epoch
+
         train_nll, train_fdg, train_fd_pred = (
             train_nll_t.item(),
             train_fdg_t.item(),
@@ -163,9 +159,7 @@ if __name__ == "__main__":
     base_dir = "../datasets"
 
     train_dict = np.load(f"{base_dir}/{train_task}_dict.npy", allow_pickle=True).item()
-    val_test_dict = np.load(
-        f"{base_dir}/{test_task}_dict.npy", allow_pickle=True
-    ).item()
+    val_test_dict = np.load(f"{base_dir}/{test_task}_dict.npy", allow_pickle=True).item()
 
     train_data = np.stack(list(train_dict.values()), axis=0)
     train_data_ids = list(train_dict.keys())
@@ -178,9 +172,7 @@ if __name__ == "__main__":
     rng = np.random.default_rng(42)
 
     # Split val and test patients with non-overlapping sets of patients
-    val_patients = rng.choice(
-        num_patients, size=int(val_percent * num_patients), replace=False
-    )
+    val_patients = rng.choice(num_patients, size=int(val_percent * num_patients), replace=False)
     test_patients = np.setdiff1d(np.arange(num_patients), val_patients)
 
     # Split val and test patient ids
@@ -205,19 +197,13 @@ if __name__ == "__main__":
 
     dataset_device = device if use_gpu_loader else "cpu"
     train_dataset = TimeSeriesDataset(train_data, train_data_ids, device=dataset_device)
-    val_dataset = TimeSeriesDataset(
-        test_data[val_patients], val_patients_ids, device=dataset_device
-    )
-    test_dataset = TimeSeriesDataset(
-        test_data[test_patients], test_patients_ids, device=dataset_device
-    )
+    val_dataset = TimeSeriesDataset(test_data[val_patients], val_patients_ids, device=dataset_device)
+    test_dataset = TimeSeriesDataset(test_data[test_patients], test_patients_ids, device=dataset_device)
 
     batch_size = 32768
 
     if use_gpu_loader:
-        train_loader = GPUBatchLoader(
-            train_dataset, batch_size=batch_size, shuffle=True
-        )
+        train_loader = GPUBatchLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_loader = GPUBatchLoader(val_dataset, batch_size=batch_size, shuffle=False)
         test_loader = GPUBatchLoader(test_dataset, batch_size=batch_size, shuffle=False)
     else:
@@ -243,9 +229,7 @@ if __name__ == "__main__":
             pin_memory=True,
         )
 
-    model = GRUModel(
-        input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5
-    ).to(device)
+    model = GRUModel(input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     criterion = nn.GaussianNLLLoss()
     beta = 0.5
@@ -279,9 +263,7 @@ if __name__ == "__main__":
     plt.plot(val_loss_history, label="Val Loss")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.title(
-        f"Train and Val Loss - GRU train {train_task} test {test_task} beta {beta}"
-    )
+    plt.title(f"Train and Val Loss - GRU train {train_task} test {test_task} beta {beta}")
     plt.legend()
     plt.grid()
     plt.savefig(f"../checkpoints/{RUN_TAG}_loss_history.png")

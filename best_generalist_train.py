@@ -41,11 +41,6 @@ def train(
     save_dict = {}
     pbar = tqdm.trange(epochs)
     for epoch in pbar:
-        # accumulate sample-weighted NLL so the reported per-sample mean is
-        # correct even when the last batch is smaller than the rest, and
-        # consistent with the sample-weighted FDg computed below. Keep
-        # accumulators on the GPU and sync once at epoch end — per-batch
-        # .item()/.cpu() calls were forcing a GPU→host stall every step.
         train_nll_sum = torch.zeros((), device=device)
         train_n = 0
         train_fd_baselines = []
@@ -76,7 +71,7 @@ def train(
         train_fdg_t = fd_gain(train_fd_baseline_cat, train_fd_pred_cat).mean()
         train_fd_pred_t = train_fd_pred_cat.mean()
         train_nll_t = train_nll_sum / train_n
-        # single GPU→host sync per epoch
+
         train_nll, train_fdg, train_fd_pred = (
             train_nll_t.item(),
             train_fdg_t.item(),
@@ -179,8 +174,6 @@ if __name__ == "__main__":
     test_percent = 0.10
     # val gets the remainder (0.15)
 
-    # patient ids common to all three tasks — preprocessing already filters to
-    # the intersection, so any one dict's keys are fine
     patient_ids = np.array(sorted(task_dicts["R"].keys()))
 
     train_ids = rng.choice(patient_ids, size=int(train_percent * len(patient_ids)), replace=False)
@@ -192,17 +185,22 @@ if __name__ == "__main__":
         # [N, T_task, 6] — T is constant within a task but differs across tasks
         return np.stack([task_dict[pid] for pid in ids], axis=0)
 
+    # {"train": {"R": [N_tr, T_R, 6], "M": [N_tr, T_M, 6], "L": [N_tr, T_L, 6]}, "val": {...}, "test": {...}}
     splits = {
-        split_name: {task: stack(d, split_ids) for task, d in task_dicts.items()}
+        split_name: {task: stack(task_dict, split_ids) for task, task_dict in task_dicts.items()}
         for split_name, split_ids in (("train", train_ids), ("val", val_ids), ("test", test_ids))
     }
 
     # normalize the datasets using mu/sigma pooled across all training data
     # (all 3 tasks) — one (mu, sigma) per dimension stored in the checkpoint
-    # so eval applies the same normalization regardless of which task it scores
-    train_frames = np.concatenate(
-        [arr.reshape(-1, 6) for arr in splits["train"].values()], axis=0
-    )
+    # so eval applies the same normalization regardless of which task it scores.
+    # probably rescaling with the task-specific mu/sigma would yield better performance, but
+    # this way it's more task-agnostic.
+
+    # To compute the total mean, collapse [N_tr, T_task, 6] -> [N_tr * T_task, 6] and concatenate tasks
+    # -> [N_tr*T_R + N_tr*T_M + N_tr*T_L, 6] -> mean -> [6]
+    train_frames = np.concatenate([arr.reshape(-1, 6) for arr in splits["train"].values()], axis=0)
+
     mu = train_frames.mean(axis=0)  # shape [6]
     sigma = train_frames.std(axis=0)  # shape [6]
     for split in splits.values():
