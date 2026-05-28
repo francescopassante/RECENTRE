@@ -31,7 +31,7 @@ def test(model, test_loader, criterion, device, mu, sigma):
     with torch.no_grad():
         for p, x, y in test_loader:
             x, y = x.to(device), y.to(device)
-            # GRU.forward returns (mean, variance) — already exp'd inside the model.
+
             y_pred, y_var = model(x)
             test_nll += criterion(y_pred, y, y_var).item()
 
@@ -72,13 +72,9 @@ def test(model, test_loader, criterion, device, mu, sigma):
 """
 
 # Pick which checkpoint to evaluate
-FILENAME = "GRU_bestgeneralist_beta0.5_ep100.pth"
-CHECKPOINT_PATH = f"checkpoints/best_generalist/{FILENAME}"
-
-# Which task to evaluate on.
-# None for cross task testing (test_task is written in the checkpoint)
-
-TEST_TASK = "L"
+MODEL_TAG = "GRU"
+FILENAME = "GRU_R+M+LvL_beta0.5_ep100.pth"
+CHECKPOINT_PATH = f"checkpoints/{FILENAME}"
 
 device = "cpu"
 
@@ -94,25 +90,18 @@ beta = saved_dict["beta"]
 epochs = saved_dict["epochs"]
 mu = saved_dict["mu"]
 sigma = saved_dict["sigma"]
-
-is_generalist = "tasks" in saved_dict
-if is_generalist:
-    assert TEST_TASK is not None, "Generalist checkpoint has no fixed test_task — set TEST_TASK to 'R', 'M', or 'L'."
-    test_task = TEST_TASK
-    train_task = "+".join(saved_dict["tasks"])  # purely cosmetic, for the tag
-else:
-    train_task = saved_dict["train_task"]
-    test_task = TEST_TASK if TEST_TASK is not None else saved_dict["test_task"]
-    expected = f"GRU_{train_task}v{saved_dict['test_task']}_beta{beta}_ep{epochs}.pth"
-    assert FILENAME == expected, (
-        "FILENAME does not match checkpoint contents. Please update the filename variable to match the checkpoint you want to evaluate."
-    )
+train_task = saved_dict["train_task"]
+test_task = saved_dict["test_task"]
 
 
 TAG = FILENAME.removesuffix(".pth")
-if is_generalist or TEST_TASK is not None:
-    # disambiguate results dir when one checkpoint is evaluated on multiple tasks
-    TAG = f"{TAG}_on{test_task}"
+assert FILENAME == f"{MODEL_TAG}_{train_task}v{test_task}_beta{beta}_ep{epochs}.pth", (
+    "Filename should follow the format: GRU_{train_task}_beta{beta}_ep{epochs}.pth"
+)
+
+# Explicit what task the testing has been done on
+TAG = f"{TAG}_on{test_task}"
+
 RESULTS_DIR = f"results/{TAG}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -121,7 +110,6 @@ test_dict = np.load(f"datasets/{test_task}_dict.npy", allow_pickle=True).item()
 
 test_data = np.array([test_dict[pid] for pid in test_ids])  # [num_patients, patient_frames, 6]
 test_data = (test_data - mu) / sigma
-
 
 test_dataset = TimeSeriesDataset(test_data, test_ids, device=device)
 test_loader = GPUBatchLoader(test_dataset, batch_size=1024, shuffle=False)

@@ -61,11 +61,7 @@ def load_data(data_paths):
                 patient_dict[patient_id][task] = data
 
     # Removes patients that miss one or more of the three tasks
-    patients_to_remove = [
-        patient_id
-        for patient_id, tasks in patient_dict.items()
-        if len(tasks) < len(data_paths)
-    ]
+    patients_to_remove = [patient_id for patient_id, tasks in patient_dict.items() if len(tasks) < len(data_paths)]
     for patient_id in patients_to_remove:
         del patient_dict[patient_id]
 

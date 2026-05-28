@@ -1,3 +1,5 @@
+import bisect
+
 import torch
 from torch.utils.data import Dataset
 
@@ -56,9 +58,7 @@ class GPUBatchLoader:
         self.windows_per_patient = dataset.T - dataset.time_span + 1
         self.n_samples = dataset.N * self.windows_per_patient
         # offsets that pick out the sub-sequence frames: [0, 2, ..., time_span-2]
-        self._x_offsets = torch.arange(
-            0, dataset.time_span, 2, device=dataset.data.device
-        )
+        self._x_offsets = torch.arange(0, dataset.time_span, 2, device=dataset.data.device)
 
     def __len__(self):
         return (self.n_samples + self.batch_size - 1) // self.batch_size
@@ -101,9 +101,11 @@ class MultiTaskLoader:
         return sum(len(l) for l in self.loaders)
 
     def __iter__(self):
-        schedule = torch.cat(
-            [torch.full((len(l),), i, dtype=torch.long) for i, l in enumerate(self.loaders)]
-        )
+        # schedule is the list: [R, R, R, ..., R, M, M, ..., M, L, L, ..., L] with R as many times as there are batches in the resting data loader and so on.
+        # essentially it is a schedule of which task to draw the next batch from.
+        schedule = torch.cat([torch.full((len(l),), i, dtype=torch.long) for i, l in enumerate(self.loaders)])
+
+        # permute schedule so that each batch is from a random task.
         if self.shuffle:
             perm = torch.randperm(schedule.numel(), generator=self._gen)
             schedule = schedule[perm]
