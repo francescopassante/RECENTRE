@@ -19,7 +19,7 @@ def save(fig, name):
     print(f"saved {path}")
 
 
-def test(model, test_loader, criterion, device, mu, sigma):
+def test(model, test_loader, criterion, device, mu, sigma, baseline_if_uncertain=False, percentile_threshold=75, sigma_dist=None):
     model.eval()
     test_fd_baselines = []
     test_fd_preds = []
@@ -28,11 +28,19 @@ def test(model, test_loader, criterion, device, mu, sigma):
     patient_pred_true_base = {p: {"pred": [], "true": [], "baseline": []} for p in test_loader.dataset.ids}
     mu = torch.tensor(mu, dtype=torch.float32, device=device)
     sigma = torch.tensor(sigma, dtype=torch.float32, device=device)
+    sigma_threshold = np.percentile(sigma_dist.numpy(), percentile_threshold, axis=0)
     with torch.no_grad():
         for p, x, y in test_loader:
             x, y = x.to(device), y.to(device)
 
             y_pred, y_var = model(x)
+
+            if baseline_if_uncertain:
+                pred_sigma = y_var.sqrt()
+                # If the model is uncertain (predicted variance above threshold in any dimension), use the baseline instead of the prediction.
+                uncertain_mask = (pred_sigma > sigma_threshold).any(dim=1)  # [batch_size]
+                y_pred[uncertain_mask] = x[uncertain_mask, -1, :]  # replace with baseline for uncertain samples
+
             test_nll += criterion(y_pred, y, y_var).item()
 
             # standardized residual in normalized space (scale-invariant)
@@ -73,7 +81,7 @@ def test(model, test_loader, criterion, device, mu, sigma):
 
 # Pick which checkpoint to evaluate
 MODEL_TAG = "GRU"
-FILENAME = "GRU_R+M+LvL_beta0.5_ep100.pth"
+FILENAME = "GRU_R+M+LvR+M+L_beta0.5_ep100.pth"
 CHECKPOINT_PATH = f"checkpoints/{FILENAME}"
 
 device = "cpu"

@@ -96,17 +96,21 @@ def train(
             val_fd_preds = []
             val_nll_sum = torch.zeros((), device=device)
             val_n = 0
+            # Array to store predicted sigmas to reconstruct predicted sigma distribution
+            pred_sigmas = []
             for _, x, y in val_loader:
                 x, y = x.to(device), y.to(device)
-                y_pred, y_logvar = model(x)
+                y_pred, y_var = model(x)
                 bs = y.size(0)
-                val_nll_sum += criterion(y_pred, y, y_logvar) * bs
+                val_nll_sum += criterion(y_pred, y, y_var) * bs
                 val_n += bs
 
                 last_x = x[:, -1, :]
                 val_fd_baselines.append(fd(last_x, y, mu_t, sigma_t))
                 val_fd_preds.append(fd(y_pred, y, mu_t, sigma_t))
+                pred_sigmas.append(y_var.sqrt())
 
+            pred_sigmas_cat = torch.cat(pred_sigmas, dim=0)
             fd_baseline_cat = torch.cat(val_fd_baselines, dim=0)
             fd_model_cat = torch.cat(val_fd_preds, dim=0)
             val_nll_epoch = val_nll_sum / val_n
@@ -114,10 +118,11 @@ def train(
             val_fdg_epoch = fd_gain(fd_baseline_cat, fd_model_cat).mean()
 
             # single GPU→cpu per epoch
-            val_nll, val_fd_pred, val_fdg = (
+            val_nll, val_fd_pred, val_fdg, pred_sigmas = (
                 val_nll_epoch.item(),
                 val_fd_pred_epoch.item(),
                 val_fdg_epoch.item(),
+                pred_sigmas_cat.cpu(),
             )
             val_loss = val_nll - beta * val_fdg
 
@@ -153,6 +158,7 @@ def train(
                 "beta": beta,
                 "train_task": train_task,
                 "test_task": test_task,
+                "pred_sigma": pred_sigmas,
             }
         else:
             early_counter += 1
