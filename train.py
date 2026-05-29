@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import tqdm
-from torch.utils.data import DataLoader
 
 from GRU import GRUModel
 from metrics import fd, fd_gain
@@ -26,6 +25,8 @@ def train(
     mu,
     sigma,
     checkpoint_path,
+    train_task,
+    test_task,
     patience=10,
     beta=0.1,
 ):
@@ -265,51 +266,70 @@ def split_data(train_task, test_task, split_percentages, batch_size, cross_patie
 
 
 if __name__ == "__main__":
-    train_task = "R+M+L"
-    test_task = "L"
-    batch_size = 16384
+    """
+    =======================================================================================
+    Training configuration
+    =======================================================================================
+    """
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # when cross_patients = False, train set is automatically the whole dataset,
-    # only the val and test percentages matter and must sum to 1.0;
-    split_percentages = (0.7, 0.15, 0.15)
+    model_config = {
+        "input_dim": 6,
+        "hidden_dim": 128,
+        "output_dim": 6,
+        "num_layers": 2,
+        "dropout": 0.5,
+    }
 
-    train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids = split_data(
-        train_task=train_task,
-        test_task=test_task,
-        split_percentages=split_percentages,
-        batch_size=batch_size,
-        cross_patients=False,
-    )
+    dataset_config = {
+        "train_task": "R+M+L",
+        "test_task": "L",
+        "batch_size": 16384,
+        # when cross_patients = False, train set is automatically the whole dataset,
+        # only the val and test percentages matter and must sum to 1.0;
+        "split_percentages": (0.7, 0.15, 0.15),
+        "cross_patients": False,
+        "device": device,
+    }
 
-    model = GRUModel(input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5).to(device)
+    train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids = split_data(**dataset_config)
+    model = GRUModel(**model_config).to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     criterion = nn.GaussianNLLLoss()
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
-    beta = 0.5
 
     checkpoint_dir = "checkpoints"
     os.makedirs(checkpoint_dir, exist_ok=True)
-    epochs = 150
-    RUN_TAG = f"GRU_{train_task}v{test_task}_beta{beta}_ep{epochs}"
+
+    train_config = {
+        "optimizer": optimizer,
+        "criterion": criterion,
+        "scheduler": scheduler,
+        "patience": 100,
+        "beta": 0.5,
+        "epochs": 150,
+        "model": model,
+        "train_loader": train_loader,
+        "val_loader": val_loader,
+        "train_ids": train_ids,
+        "val_ids": val_ids,
+        "test_ids": test_ids,
+        "device": device,
+        "mu": mu,
+        "sigma": sigma,
+        "train_task": dataset_config["train_task"],
+        "test_task": dataset_config["test_task"],
+    }
+
+    RUN_TAG = (
+        f"GRU_{dataset_config['train_task']}v{dataset_config['test_task']}_beta{train_config['beta']}_ep{train_config['epochs']}"
+    )
+    train_config["checkpoint_path"] = f"{checkpoint_dir}/{RUN_TAG}.pth"
+
     train_loss_history, val_loss_history = train(
-        model,
-        train_loader,
-        val_loader,
-        train_ids=train_ids,
-        val_ids=val_ids,
-        test_ids=test_ids,
-        optimizer=optimizer,
-        criterion=criterion,
-        scheduler=scheduler,
-        device=device,
-        epochs=epochs,
-        mu=mu,
-        sigma=sigma,
-        checkpoint_path=f"{checkpoint_dir}/{RUN_TAG}.pth",
-        patience=100,
-        beta=beta,
+        **train_config,
     )
 
     # train and val loss history plots:
@@ -320,8 +340,10 @@ if __name__ == "__main__":
     plt.plot(val_loss_history, label="Val Loss")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.title(f"Train and Val Loss - GRU train {train_task} test {test_task} beta {beta}")
+    plt.title(
+        f"Train and Val Loss - GRU train {dataset_config['train_task']} test {dataset_config['test_task']} beta {train_config['beta']}"
+    )
     plt.legend()
     plt.grid()
-    plt.savefig(f"../checkpoints/{RUN_TAG}_loss_history.png")
+    plt.savefig(f"{checkpoint_dir}/{RUN_TAG}_loss_history.png")
     plt.show()
