@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from matplotlib.lines import Line2D
 
 from GRU import GRUModel
 from metrics import fd, fd_gain
@@ -10,6 +11,8 @@ from TimeSeriesDataset import GPUBatchLoader, TimeSeriesDataset
 
 # Rotations are scaled by 50 mm (avg head radius) so every dim ends up in mm.
 DIM_NAMES = ["Tx (mm)", "Ty (mm)", "Tz (mm)", "Rx (mm)", "Ry (mm)", "Rz (mm)"]
+# one marker per dimension, so per-dim points stay distinguishable without inline labels
+DIM_MARKERS = ["o", "s", "^", "D", "v", "P"]
 
 
 def save(fig, name):
@@ -27,7 +30,7 @@ def test(
     mu,
     sigma,
     baseline_if_uncertain=False,
-    percentile_threshold=75,
+    percentile_threshold=None,
     sigma_dist=None,
 ):
     model.eval()
@@ -40,9 +43,13 @@ def test(
     }
     mu = torch.tensor(mu, dtype=torch.float32, device=device)
     sigma = torch.tensor(sigma, dtype=torch.float32, device=device)
-    sigma_threshold = torch.tensor(
-        np.percentile(sigma_dist.numpy(), percentile_threshold, axis=0), device=device
-    )
+    if percentile_threshold is not None:
+        sigma_threshold = torch.tensor(
+            np.percentile(sigma_dist.numpy(), percentile_threshold, axis=0),
+            device=device,
+        )
+    else:
+        sigma_threshold = None
     with torch.no_grad():
         for p, x, y in test_loader:
             x, y = x.to(device), y.to(device)
@@ -123,32 +130,40 @@ epochs = saved_dict["epochs"]
 mu = saved_dict["mu"]
 sigma = saved_dict["sigma"]
 train_task = saved_dict["train_task"]
+test_task = saved_dict["test_task"]
 sigma_dist = saved_dict["pred_sigma"]
 
-test_task = "R"
+baseline_if_uncertain = False
+threshold_percentile = None
 
 
 TAG = FILENAME.removesuffix(".pth")
-# assert FILENAME == f"{MODEL_TAG}_{train_task}v{test_task}_beta{beta}_ep{epochs}.pth", (
-#     "Filename should follow the format: GRU_{train_task}_beta{beta}_ep{epochs}.pth"
-# )
+assert (
+    FILENAME == f"{MODEL_TAG}_{train_task}v{test_task}_beta{beta}_ep{epochs}.pth"
+), "Filename should follow the format: {MODEL_TAG}_{train_task}v{test_task}_beta{beta}_ep{epochs}.pth"
 
 # Explicit what task the testing has been done on
-TAG = f"{TAG}_on{test_task}_threshold99"
+TAG = f"{TAG}_on{test_task}_threshold{threshold_percentile}"
 
 RESULTS_DIR = f"results/{TAG}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
+if "+" in test_task:
+    test_tasks = test_task.split("+")
+else:
+    test_tasks = [test_task]
 
-test_dict = np.load(f"datasets/{test_task}_dict.npy", allow_pickle=True).item()
+test_dict = {
+    task: np.load(f"datasets/{task}_dict.npy", allow_pickle=True).item()
+    for task in test_tasks
+}
 
-test_data = np.array(
-    [test_dict[pid] for pid in test_ids]
-)  # [num_patients, patient_frames, 6]
-test_data = (test_data - mu) / sigma
-
-test_dataset = TimeSeriesDataset(test_data, test_ids, device=device)
-test_loader = GPUBatchLoader(test_dataset, batch_size=1024, shuffle=False)
+# fixed color per task, reused by every task-aware plot below
+TASK_COLORS = {
+    "R": "tab:blue",
+    "M": "tab:orange",
+    "L": "tab:green",
+}
 
 model = GRUModel(
     input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5
@@ -156,17 +171,30 @@ model = GRUModel(
 model.load_state_dict(model_state_dict)
 criterion = torch.nn.GaussianNLLLoss()
 
-patient_pred_true_base, metrics = test(
-    model,
-    test_loader,
-    criterion,
-    device,
-    mu=mu,
-    sigma=sigma,
-    baseline_if_uncertain=True,
-    percentile_threshold=99,
-    sigma_dist=sigma_dist,
-)
+
+#  Evaluate one task at a time and keep each task's results.
+results_by_task = {}
+for task in test_tasks:
+    task_data = np.array(
+        [test_dict[task][pid] for pid in test_ids]
+    )  # [num_patients, patient_frames, 6]
+    task_data = (task_data - mu) / sigma
+
+    task_dataset = TimeSeriesDataset(task_data, test_ids, device=device)
+    task_loader = GPUBatchLoader(task_dataset, batch_size=1024, shuffle=False)
+
+    patient_pred_true_base, metrics = test(
+        model,
+        task_loader,
+        criterion,
+        device,
+        mu=mu,
+        sigma=sigma,
+        baseline_if_uncertain=baseline_if_uncertain,
+        percentile_threshold=threshold_percentile,
+        sigma_dist=sigma_dist,
+    )
+    results_by_task[task] = (patient_pred_true_base, metrics)
 
 
 """
@@ -175,52 +203,74 @@ patient_pred_true_base, metrics = test(
 ==================================================
 """
 
-# Aggregate per-patient arrays into flat matrices and per-patient FD values.
+# Aggregate per-patient arrays into flat matrices and per-(task, patient) FD values.
 true_values = []
 pred_values = []
 baseline_values = []
-fd_per_patient_pred = []
-fd_per_patient_base = []
-fdg_per_patient = []
+frame_task_labels = []  # contains the task label for each frame. Used for coloring
 
-for patient_id in patient_pred_true_base.keys():
-    # shape [patient_frames, 6]
-    p_pred = np.array(patient_pred_true_base[patient_id]["pred"])
-    p_true = np.array(patient_pred_true_base[patient_id]["true"])
-    p_base = np.array(patient_pred_true_base[patient_id]["baseline"])
+# patient-level FD, kept separate per task for the 04 visualizations
+fd_per_patient_pred = {task: [] for task in test_tasks}
+fd_per_patient_base = {task: [] for task in test_tasks}
+fdg_per_patient = {task: [] for task in test_tasks}
 
-    # multiply the rotation parameters by 50mm (head radius) to translate to comparable values wrt translations
-    p_pred[:, 3:6] *= 50
-    p_true[:, 3:6] *= 50
-    p_base[:, 3:6] *= 50
-    pred_values.append(p_pred)
-    true_values.append(p_true)
-    baseline_values.append(p_base)
+for task in test_tasks:
+    patient_pred_true_base, _ = results_by_task[task]
+    for patient_id in patient_pred_true_base.keys():
+        # shape [patient_frames, 6]
+        p_pred = np.array(patient_pred_true_base[patient_id]["pred"])
+        p_true = np.array(patient_pred_true_base[patient_id]["true"])
+        p_base = np.array(patient_pred_true_base[patient_id]["baseline"])
 
-    # compute per patient fd both for the model and the baseline by summing over dimensions and averaging over frames
-    scaled_pred = p_pred.copy()
-    scaled_true = p_true.copy()
-    scaled_base = p_base.copy()
+        # multiply the rotation parameters by 50mm (head radius) to translate to comparable values wrt translations
+        p_pred[:, 3:6] *= 50
+        p_true[:, 3:6] *= 50
+        p_base[:, 3:6] *= 50
+        pred_values.append(p_pred)
+        true_values.append(p_true)
+        baseline_values.append(p_base)
+        # append the task label for each frame of the patient
+        frame_task_labels.append(np.full(len(p_pred), task))
 
-    # scaled_pred: [patient_frames, 6]
+        # compute per patient fd both for the model and the baseline by summing over dimensions and averaging over frames
+        scaled_pred = p_pred.copy()
+        scaled_true = p_true.copy()
+        scaled_base = p_base.copy()
 
-    fd_pred = np.abs(scaled_pred - scaled_true).sum(axis=1)
-    fd_base = np.abs(scaled_base - scaled_true).sum(axis=1)
+        # scaled_pred: [patient_frames, 6]
 
-    fd_per_patient_pred.append(fd_pred.mean())
-    fd_per_patient_base.append(fd_base.mean())
-    fdg_per_patient.append(((fd_base - fd_pred) / fd_base).mean())
+        fd_pred = np.abs(scaled_pred - scaled_true).sum(axis=1)
+        fd_base = np.abs(scaled_base - scaled_true).sum(axis=1)
+
+        fd_per_patient_pred[task].append(fd_pred.mean())
+        fd_per_patient_base[task].append(fd_base.mean())
+        fdg_per_patient[task].append(((fd_base - fd_pred) / fd_base).mean())
 
 
 # transform to np arrays
-true_values = np.concatenate(true_values, axis=0)  # [num_patients*patient_frames, 6]
+true_values = np.concatenate(true_values, axis=0)  # [total_frames, 6]
 pred_values = np.concatenate(pred_values, axis=0)
 baseline_values = np.concatenate(baseline_values, axis=0)
-fd_per_patient_pred = np.array(fd_per_patient_pred)  # [num_patients]
-fd_per_patient_base = np.array(fd_per_patient_base)
-fdg_per_patient = np.array(fdg_per_patient)
+frame_task_labels = np.concatenate(frame_task_labels, axis=0)  # [total_frames]
+fd_per_patient_pred = {task: np.array(v) for task, v in fd_per_patient_pred.items()}
+fd_per_patient_base = {task: np.array(v) for task, v in fd_per_patient_base.items()}
+fdg_per_patient = {task: np.array(v) for task, v in fdg_per_patient.items()}
 
-# compute model and baseline errors for MAE and RMSE
+# pooled per-sample arrays from each task's metrics, with matching task labels
+fd_pred_per_sample = np.concatenate(
+    [results_by_task[t][1]["fd_pred_per_sample"] for t in test_tasks]
+)
+fd_base_per_sample = np.concatenate(
+    [results_by_task[t][1]["fd_base_per_sample"] for t in test_tasks]
+)
+z_per_sample = np.concatenate(
+    [results_by_task[t][1]["z_per_sample"] for t in test_tasks], axis=0
+)
+sample_task_labels = np.concatenate(
+    [np.full(len(results_by_task[t][1]["fd_pred_per_sample"]), t) for t in test_tasks]
+)
+
+# compute model and baseline errors for MAE and RMSE (pooled across tasks)
 err_pred = pred_values - true_values
 err_base = baseline_values - true_values
 
@@ -232,30 +282,49 @@ rmse_base_dim = np.sqrt((err_base**2).mean(axis=0))
 # ==========================================================================================
 # 1) Per-dimension error: scatter of baseline vs model error (MAE and RMSE)
 # ==========================================================================================
+# dimension identity is encoded by marker shape and task by color, so the two
+# legends below replace the inline dim labels (which overlapped near the origin).
+task_handles = [
+    Line2D([0], [0], marker="o", linestyle="", color=TASK_COLORS[t], label=t)
+    for t in test_tasks
+] + [Line2D([0], [0], linestyle="--", color="black", label="y = x")]
+dim_handles = [
+    Line2D([0], [0], marker=DIM_MARKERS[d], linestyle="", color="gray", label=name)
+    for d, name in enumerate(DIM_NAMES)
+]
+
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-for ax, metric_base, metric_model, label in zip(
-    axes,
-    [mae_base_dim, rmse_base_dim],
-    [mae_pred_dim, rmse_pred_dim],
-    ["MAE", "RMSE"],
-):
-    ax.scatter(metric_base, metric_model, color="blue", s=60)
-    for d, name in enumerate(DIM_NAMES):
-        ax.annotate(
-            name,
-            (metric_base[d], metric_model[d]),
-            fontsize=9,
-            xytext=(5, 5),
-            textcoords="offset points",
-        )
-    hi = max(metric_base.max(), metric_model.max()) * 1.1
-    ax.plot([0, hi], [0, hi], "k--", label="y = x")
+for ax, label in zip(axes, ["MAE", "RMSE"]):
+    hi = 0
+    for task in test_tasks:
+        m = frame_task_labels == task
+        ep = pred_values[m] - true_values[m]
+        eb = baseline_values[m] - true_values[m]
+        if label == "MAE":
+            metric_base = np.abs(eb).mean(axis=0)
+            metric_model = np.abs(ep).mean(axis=0)
+        else:
+            metric_base = np.sqrt((eb**2).mean(axis=0))
+            metric_model = np.sqrt((ep**2).mean(axis=0))
+        for d in range(len(DIM_NAMES)):
+            ax.scatter(
+                metric_base[d],
+                metric_model[d],
+                color=TASK_COLORS[task],
+                marker=DIM_MARKERS[d],
+                s=60,
+            )
+        hi = max(hi, metric_base.max(), metric_model.max())
+    hi *= 1.1
+    ax.plot([0, hi], [0, hi], "k--")
     ax.set_xlim(0, hi)
     ax.set_ylim(0, hi)
     ax.set_xlabel(f"Baseline {label} (mm)")
     ax.set_ylabel(f"Model {label} (mm)")
     ax.set_title(f"{label} per dimension")
-    ax.legend()
+    task_legend = ax.legend(handles=task_handles, loc="upper left", fontsize=8)
+    ax.add_artist(task_legend)
+    ax.legend(handles=dim_handles, loc="lower right", fontsize=8)
 fig.tight_layout()
 save(fig, "01_error_per_dimension")
 
@@ -267,9 +336,18 @@ save(fig, "01_error_per_dimension")
 fig, axes = plt.subplots(2, 3, figsize=(14, 8))
 fig.suptitle("True vs Predicted per dimension")
 for d, ax in enumerate(axes.flat):
+    for task in test_tasks:
+        m = frame_task_labels == task
+        ax.scatter(
+            true_values[m, d],
+            pred_values[m, d],
+            s=2,
+            alpha=0.3,
+            color=TASK_COLORS[task],
+            label=task,
+        )
     x = true_values[:, d]
     y = pred_values[:, d]
-    ax.scatter(x, y, s=2, alpha=0.3, color="blue")
     lo = min(x.min(), y.min())
     hi = max(x.max(), y.max())
     ax.plot([lo, hi], [lo, hi], "k--", label="y = x")
@@ -279,7 +357,7 @@ for d, ax in enumerate(axes.flat):
     ax.set_xlabel("True")
     ax.set_ylabel("Predicted")
     ax.set_title(f"{DIM_NAMES[d]}   R²={r2:.3f}")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=8, markerscale=4)
 fig.tight_layout()
 save(fig, "02_true_vs_predicted")
 
@@ -287,52 +365,60 @@ save(fig, "02_true_vs_predicted")
 # 3) Framewise-displacement (FD) distribution — model vs baseline
 # ==========================================================================================
 
-fd_pred_arr = metrics["fd_pred_per_sample"]
-fd_base_arr = metrics["fd_base_per_sample"]
+fd_pred_arr = fd_pred_per_sample
+fd_base_arr = fd_base_per_sample
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 ax = axes[0]
 hi = max(np.percentile(fd_pred_arr, 99.5), np.percentile(fd_base_arr, 99.5))
 bins = np.linspace(0, hi, 80)
+# pooled baseline as a common reference, model FD overlaid per task.
+# density=True so tasks with more samples (e.g. Resting) don't dominate.
 ax.hist(
     fd_base_arr,
     bins=bins,
-    color="red",
-    alpha=0.5,
+    color="gray",
+    alpha=0.4,
+    density=True,
     label=f"Baseline (mean={fd_base_arr.mean():.3f})",
 )
-ax.hist(
-    fd_pred_arr,
-    bins=bins,
-    color="blue",
-    alpha=0.5,
-    label=f"Model (mean={fd_pred_arr.mean():.3f})",
-)
+for task in test_tasks:
+    m = sample_task_labels == task
+    ax.hist(
+        fd_pred_arr[m],
+        bins=bins,
+        color=TASK_COLORS[task],
+        histtype="step",
+        linewidth=1.5,
+        density=True,
+        label=f"Model {task} (mean={fd_pred_arr[m].mean():.3f})",
+    )
 ax.set_xlabel("Framewise displacement (mm)")
-ax.set_ylabel("count")
-ax.set_title("FD distribution — model vs baseline")
+ax.set_ylabel("density")
+ax.set_title("FD distribution — model (per task) vs baseline")
 ax.legend()
 
 ax = axes[1]
 fdg_per_sample = (fd_base_arr - fd_pred_arr) / fd_base_arr
 # clip long tails so the central mass is visible
 gain_lim = np.percentile(np.abs(fdg_per_sample), 99)
-ax.hist(
-    np.clip(fdg_per_sample, -gain_lim, gain_lim),
-    bins=np.linspace(-gain_lim, gain_lim, 80),
-    color="purple",
-    alpha=0.7,
-)
+gain_bins = np.linspace(-gain_lim, gain_lim, 80)
+for task in test_tasks:
+    m = sample_task_labels == task
+    g = np.clip(fdg_per_sample[m], -gain_lim, gain_lim)
+    ax.hist(
+        g,
+        bins=gain_bins,
+        color=TASK_COLORS[task],
+        histtype="step",
+        linewidth=1.5,
+        density=True,
+        label=f"{task} (mean={fdg_per_sample[m].mean():.3f})",
+    )
 ax.axvline(0, color="black")
-ax.axvline(
-    fdg_per_sample.mean(),
-    color="purple",
-    linestyle="--",
-    label=f"mean = {fdg_per_sample.mean():.3f}",
-)
 pos = (fdg_per_sample > 0).mean() * 100
 ax.set_xlabel("FD gain  (baseline − model) / baseline")
-ax.set_ylabel("count")
+ax.set_ylabel("density")
 ax.set_title(f"Per-sample FD gain — {pos:.1f}% of samples improved")
 ax.legend()
 fig.tight_layout()
@@ -342,30 +428,47 @@ save(fig, "03_fd_distribution")
 # 4) Per-patient FD gain — sorted bar chart + baseline vs model FD scatter
 # ==========================================================================================
 
-order = np.argsort(fdg_per_patient)
-sorted_fdg = fdg_per_patient[order]
-colors = ["blue" if v >= 0 else "red" for v in sorted_fdg]
+# left: one sorted-bar small multiple per task; right: combined FD scatter.
+n_tasks = len(test_tasks)
+fig, axes = plt.subplots(1, n_tasks + 1, figsize=(6 * (n_tasks + 1), 5))
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-ax = axes[0]
-ax.bar(np.arange(len(sorted_fdg)), sorted_fdg, color=colors)
-ax.axhline(0, color="black")
-ax.axhline(
-    fdg_per_patient.mean(),
-    color="black",
-    linestyle="--",
-    label=f"mean = {fdg_per_patient.mean():.3f}",
-)
-ax.set_xlabel("Patient (sorted by FD gain)")
-ax.set_ylabel("FD gain")
-ax.set_title(
-    f"Per-patient FD gain — {(fdg_per_patient > 0).mean() * 100:.1f}% of patients improved"
-)
-ax.legend()
+# shared y-range across the bar small multiples (scatter keeps its own scale)
+all_fdg = np.concatenate([fdg_per_patient[t] for t in test_tasks])
+pad = 0.05 * (all_fdg.max() - all_fdg.min())
+y_lo, y_hi = all_fdg.min() - pad, all_fdg.max() + pad
 
-ax = axes[1]
-ax.scatter(fd_per_patient_base, fd_per_patient_pred, color="blue", s=30)
-hi = max(fd_per_patient_base.max(), fd_per_patient_pred.max()) * 1.05
+for ax, task in zip(axes[:n_tasks], test_tasks):
+    fdg = fdg_per_patient[task]
+    order = np.argsort(fdg)
+    sorted_fdg = fdg[order]
+    colors = ["blue" if v >= 0 else "red" for v in sorted_fdg]
+    ax.bar(np.arange(len(sorted_fdg)), sorted_fdg, color=colors)
+    ax.axhline(0, color="black")
+    ax.axhline(
+        fdg.mean(),
+        color="black",
+        linestyle="--",
+        label=f"mean = {fdg.mean():.3f}",
+    )
+    ax.set_ylim(y_lo, y_hi)
+    ax.set_xlabel("Patient (sorted by FD gain)")
+    ax.set_ylabel("FD gain")
+    ax.set_title(f"{task} — {(fdg > 0).mean() * 100:.1f}% of patients improved")
+    ax.legend()
+
+ax = axes[-1]
+hi = 0
+for task in test_tasks:
+    ax.scatter(
+        fd_per_patient_base[task],
+        fd_per_patient_pred[task],
+        color=TASK_COLORS[task],
+        s=10,
+        alpha=0.5,
+        label=task,
+    )
+    hi = max(hi, fd_per_patient_base[task].max(), fd_per_patient_pred[task].max())
+hi *= 1.05
 ax.plot([0, hi], [0, hi], "k--", label="y = x")
 ax.set_xlim(0, hi)
 ax.set_ylim(0, hi)
@@ -390,13 +493,28 @@ fig, ax = plt.subplots(figsize=(11, 6))
 ax.axis("off")
 fig.suptitle(f"Test summary — {TAG}")
 
+# headline metrics averaged across tasks (identical to the single-task values
+# when only one task is evaluated)
+overall_nll = np.mean([results_by_task[t][1]["nll"] for t in test_tasks])
+overall_fd_base = np.mean([results_by_task[t][1]["fd_base"] for t in test_tasks])
+overall_fd_pred = np.mean([results_by_task[t][1]["fd_pred"] for t in test_tasks])
+overall_fdg = np.mean([results_by_task[t][1]["fdg"] for t in test_tasks])
+
 headline = (
-    f"NLL = {metrics['nll']:.4f}     "
-    f"FD baseline = {metrics['fd_base']:.4f}     "
-    f"FD model = {metrics['fd_pred']:.4f}     "
-    f"FD gain = {metrics['fdg']:.4f}"
+    f"NLL = {overall_nll:.4f}     "
+    f"FD baseline = {overall_fd_base:.4f}     "
+    f"FD model = {overall_fd_pred:.4f}     "
+    f"FD gain = {overall_fdg:.4f}"
 )
 ax.text(0.5, 0.93, headline, ha="center", va="top", fontsize=12, weight="bold")
+
+# per-task breakdown under the headline
+task_line = "     ".join(
+    f"{t}: NLL={results_by_task[t][1]['nll']:.3f} "
+    f"FDg={results_by_task[t][1]['fdg']:.3f}"
+    for t in test_tasks
+)
+ax.text(0.5, 0.87, task_line, ha="center", va="top", fontsize=9)
 
 # table of per-dim metrics
 table_data = [["Dim", "MAE base", "MAE model", "RMSE base", "RMSE model"]]
@@ -439,7 +557,7 @@ save(fig, "05_metrics_summary")
 #   empirical std(z) > 1  ⇒  model is overconfident (σ_pred too small)
 #   empirical std(z) < 1  ⇒  model is underconfident (σ_pred too large)
 #   reduced χ² = mean(z²) should be ≈ 1
-z = metrics["z_per_sample"]  # [N, 6], in normalized space (scale-invariant)
+z = z_per_sample  # [N, 6], in normalized space (scale-invariant)
 
 fig, axes = plt.subplots(2, 3, figsize=(14, 8))
 fig.suptitle(
@@ -448,11 +566,22 @@ fig.suptitle(
 zz = np.linspace(-5, 5, 400)
 gauss_pdf = np.exp(-0.5 * zz**2) / np.sqrt(2 * np.pi)
 for d, ax in enumerate(axes.flat):
-    zd = z[:, d]
-    # clip extreme tails for the histogram view
-    zd_clip = np.clip(zd, -5, 5)
-    ax.hist(zd_clip, bins=80, density=True, color="blue", alpha=0.5, label="empirical")
+    for task in test_tasks:
+        m = sample_task_labels == task
+        # clip extreme tails for the histogram view
+        zd_clip = np.clip(z[m, d], -5, 5)
+        ax.hist(
+            zd_clip,
+            bins=80,
+            density=True,
+            color=TASK_COLORS[task],
+            histtype="step",
+            linewidth=1.5,
+            label=task,
+        )
     ax.plot(zz, gauss_pdf, "k--", label="N(0, 1)")
+    # stats pooled across tasks
+    zd = z[:, d]
     mean_z = zd.mean()
     std_z = zd.std()
     chi2_red = (zd**2).mean()
@@ -476,7 +605,9 @@ save(fig, "06_sigma_calibration")
 # ==========================================================================================
 
 random_patient_id = test_ids[0]
-random_patient_data = test_dict[random_patient_id]
+# test_dict is keyed by task → patient; visualize this patient on the first task
+viz_task = test_tasks[0]
+random_patient_data = test_dict[viz_task][random_patient_id]
 normalized_random_patient_data = (random_patient_data - mu) / sigma
 
 random_patient_dataset = TimeSeriesDataset(
@@ -518,7 +649,9 @@ pred_std[:, 3:6] *= 50
 
 
 fig, axes = plt.subplots(2, 3, figsize=(14, 8))
-fig.suptitle(f"Predicted vs True per dimension — patient {random_patient_id}")
+fig.suptitle(
+    f"Predicted vs True per dimension — patient {random_patient_id} ({viz_task})"
+)
 t_axis = np.arange(true_positions.shape[0])
 for d, ax in enumerate(axes.flat):
     ax.fill_between(
