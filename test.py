@@ -19,16 +19,30 @@ def save(fig, name):
     print(f"saved {path}")
 
 
-def test(model, test_loader, criterion, device, mu, sigma, baseline_if_uncertain=False, percentile_threshold=75, sigma_dist=None):
+def test(
+    model,
+    test_loader,
+    criterion,
+    device,
+    mu,
+    sigma,
+    baseline_if_uncertain=False,
+    percentile_threshold=75,
+    sigma_dist=None,
+):
     model.eval()
     test_fd_baselines = []
     test_fd_preds = []
     test_nll = 0
     z_all = []
-    patient_pred_true_base = {p: {"pred": [], "true": [], "baseline": []} for p in test_loader.dataset.ids}
+    patient_pred_true_base = {
+        p: {"pred": [], "true": [], "baseline": []} for p in test_loader.dataset.ids
+    }
     mu = torch.tensor(mu, dtype=torch.float32, device=device)
     sigma = torch.tensor(sigma, dtype=torch.float32, device=device)
-    sigma_threshold = np.percentile(sigma_dist.numpy(), percentile_threshold, axis=0)
+    sigma_threshold = torch.tensor(
+        np.percentile(sigma_dist.numpy(), percentile_threshold, axis=0), device=device
+    )
     with torch.no_grad():
         for p, x, y in test_loader:
             x, y = x.to(device), y.to(device)
@@ -38,8 +52,12 @@ def test(model, test_loader, criterion, device, mu, sigma, baseline_if_uncertain
             if baseline_if_uncertain:
                 pred_sigma = y_var.sqrt()
                 # If the model is uncertain (predicted variance above threshold in any dimension), use the baseline instead of the prediction.
-                uncertain_mask = (pred_sigma > sigma_threshold).any(dim=1)  # [batch_size]
-                y_pred[uncertain_mask] = x[uncertain_mask, -1, :]  # replace with baseline for uncertain samples
+                uncertain_mask = (pred_sigma > sigma_threshold).any(
+                    dim=1
+                )  # [batch_size]
+                y_pred[uncertain_mask] = x[
+                    uncertain_mask, -1, :
+                ]  # replace with baseline for uncertain samples
 
             test_nll += criterion(y_pred, y, y_var).item()
 
@@ -53,9 +71,15 @@ def test(model, test_loader, criterion, device, mu, sigma, baseline_if_uncertain
                 denormalized_pred = y_pred[i] * sigma + mu
                 denormalized_true = y[i] * sigma + mu
                 denormalized_baseline = last_x[i] * sigma + mu
-                patient_pred_true_base[p[i]]["pred"].append(denormalized_pred.cpu().numpy())
-                patient_pred_true_base[p[i]]["true"].append(denormalized_true.cpu().numpy())
-                patient_pred_true_base[p[i]]["baseline"].append(denormalized_baseline.cpu().numpy())
+                patient_pred_true_base[p[i]]["pred"].append(
+                    denormalized_pred.cpu().numpy()
+                )
+                patient_pred_true_base[p[i]]["true"].append(
+                    denormalized_true.cpu().numpy()
+                )
+                patient_pred_true_base[p[i]]["baseline"].append(
+                    denormalized_baseline.cpu().numpy()
+                )
 
     test_nll /= len(test_loader)
     fd_baseline_cat = torch.cat(test_fd_baselines, dim=0)
@@ -81,8 +105,8 @@ def test(model, test_loader, criterion, device, mu, sigma, baseline_if_uncertain
 
 # Pick which checkpoint to evaluate
 MODEL_TAG = "GRU"
-FILENAME = "GRU_R+M+LvR+M+L_beta0.5_ep100.pth"
-CHECKPOINT_PATH = f"checkpoints/{FILENAME}"
+FILENAME = "GRU_R+M+LvR+M+L_beta0.5_ep150.pth"
+CHECKPOINT_PATH = f"checkpoints/generalist/{FILENAME}"
 
 device = "cpu"
 
@@ -99,16 +123,18 @@ epochs = saved_dict["epochs"]
 mu = saved_dict["mu"]
 sigma = saved_dict["sigma"]
 train_task = saved_dict["train_task"]
-test_task = saved_dict["test_task"]
+sigma_dist = saved_dict["pred_sigma"]
+
+test_task = "R"
 
 
 TAG = FILENAME.removesuffix(".pth")
-assert FILENAME == f"{MODEL_TAG}_{train_task}v{test_task}_beta{beta}_ep{epochs}.pth", (
-    "Filename should follow the format: GRU_{train_task}_beta{beta}_ep{epochs}.pth"
-)
+# assert FILENAME == f"{MODEL_TAG}_{train_task}v{test_task}_beta{beta}_ep{epochs}.pth", (
+#     "Filename should follow the format: GRU_{train_task}_beta{beta}_ep{epochs}.pth"
+# )
 
 # Explicit what task the testing has been done on
-TAG = f"{TAG}_on{test_task}"
+TAG = f"{TAG}_on{test_task}_threshold99"
 
 RESULTS_DIR = f"results/{TAG}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -116,17 +142,31 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 test_dict = np.load(f"datasets/{test_task}_dict.npy", allow_pickle=True).item()
 
-test_data = np.array([test_dict[pid] for pid in test_ids])  # [num_patients, patient_frames, 6]
+test_data = np.array(
+    [test_dict[pid] for pid in test_ids]
+)  # [num_patients, patient_frames, 6]
 test_data = (test_data - mu) / sigma
 
 test_dataset = TimeSeriesDataset(test_data, test_ids, device=device)
 test_loader = GPUBatchLoader(test_dataset, batch_size=1024, shuffle=False)
 
-model = GRUModel(input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5).to(device)
+model = GRUModel(
+    input_dim=6, hidden_dim=128, output_dim=6, num_layers=2, dropout=0.5
+).to(device)
 model.load_state_dict(model_state_dict)
 criterion = torch.nn.GaussianNLLLoss()
 
-patient_pred_true_base, metrics = test(model, test_loader, criterion, device, mu=mu, sigma=sigma)
+patient_pred_true_base, metrics = test(
+    model,
+    test_loader,
+    criterion,
+    device,
+    mu=mu,
+    sigma=sigma,
+    baseline_if_uncertain=True,
+    percentile_threshold=99,
+    sigma_dist=sigma_dist,
+)
 
 
 """
@@ -318,7 +358,9 @@ ax.axhline(
 )
 ax.set_xlabel("Patient (sorted by FD gain)")
 ax.set_ylabel("FD gain")
-ax.set_title(f"Per-patient FD gain — {(fdg_per_patient > 0).mean() * 100:.1f}% of patients improved")
+ax.set_title(
+    f"Per-patient FD gain — {(fdg_per_patient > 0).mean() * 100:.1f}% of patients improved"
+)
 ax.legend()
 
 ax = axes[1]
@@ -400,7 +442,9 @@ save(fig, "05_metrics_summary")
 z = metrics["z_per_sample"]  # [N, 6], in normalized space (scale-invariant)
 
 fig, axes = plt.subplots(2, 3, figsize=(14, 8))
-fig.suptitle("Predicted-σ calibration — standardized residuals z = (y − μ_pred) / σ_pred")
+fig.suptitle(
+    "Predicted-σ calibration — standardized residuals z = (y − μ_pred) / σ_pred"
+)
 zz = np.linspace(-5, 5, 400)
 gauss_pdf = np.exp(-0.5 * zz**2) / np.sqrt(2 * np.pi)
 for d, ax in enumerate(axes.flat):
@@ -440,7 +484,9 @@ random_patient_dataset = TimeSeriesDataset(
     [random_patient_id],
     device=device,
 )
-random_patient_loader = torch.utils.data.DataLoader(random_patient_dataset, batch_size=16, shuffle=False)
+random_patient_loader = torch.utils.data.DataLoader(
+    random_patient_dataset, batch_size=16, shuffle=False
+)
 predicted_positions = []
 true_positions = []
 baseline_positions = []
@@ -484,7 +530,9 @@ for d, ax in enumerate(axes.flat):
         label="±1σ",
     )
     ax.plot(t_axis, true_positions[:, d], color="black", label="True", alpha=0.5)
-    ax.plot(t_axis, predicted_positions[:, d], color="blue", label="Predicted", alpha=0.1)
+    ax.plot(
+        t_axis, predicted_positions[:, d], color="blue", label="Predicted", alpha=0.1
+    )
     ax.plot(t_axis, baseline_positions[:, d], color="red", label="Baseline", alpha=0.1)
     ax.set_xlabel("Time step")
     ax.set_ylabel(DIM_NAMES[d])

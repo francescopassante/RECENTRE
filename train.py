@@ -146,7 +146,11 @@ def train(
             best_val_fdg = val_fdg
             early_counter = 0
             checkpoint_dict = {
-                "model_state_dict": model.state_dict(),
+                # clone so later epochs don't mutate the stored best weights
+                # (state_dict() returns references to the live parameters)
+                "model_state_dict": {
+                    k: v.detach().clone() for k, v in model.state_dict().items()
+                },
                 "optimizer_state_dict": optimizer.state_dict(),
                 "epoch": epoch + 1,
                 "epochs": epochs,
