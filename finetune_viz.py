@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
 
 from finetuning import DIMS
 
@@ -31,73 +32,177 @@ def load_rows(csv_path):
     return cols
 
 
+# fixed color per task, matching test.py
+TASK_COLORS = {"R": "tab:blue", "M": "tab:orange", "L": "tab:green"}
+
+
 if __name__ == "__main__":
-    TASK = "M"
+    TASKS = ["R", "M", "L"]
     results_dir = os.path.join("results", "finetune")
-    csv_path = os.path.join(results_dir, f"ft_{TASK}_before_after.csv")
+    tag = "+".join(TASKS)
+    csv_path = os.path.join(results_dir, f"ft_{tag}_before_after.csv")
     cols = load_rows(csv_path)
+
+    # tasks actually present in the CSV, in canonical R/M/L order
+    present = [t for t in ("R", "M", "L") if np.any(cols["task"] == t)]
 
     fdg_before = cols["fdg_before"]
     fdg_after = cols["fdg_after"]
+    fd_pred_before = cols["fd_pred_before"]
+    fd_pred_after = cols["fd_pred_after"]
     delta = cols["delta_fdg"]
     n = len(delta)
     win_rate = 100 * np.mean(delta > 0)
 
-    # 1) paired before/after FD-gain scatter (points above y=x improved)
+    def task_mask(t):
+        return cols["task"] == t
+
+    # 1) paired before/after FD-gain scatter, per task (points above y=x improved)
     plt.figure(figsize=(6, 6))
-    plt.scatter(fdg_before, fdg_after, s=18, alpha=0.6)
+    for t in present:
+        m = task_mask(t)
+        plt.scatter(
+            fdg_before[m], fdg_after[m], s=18, alpha=0.6, color=TASK_COLORS[t], label=t
+        )
     lo = float(min(fdg_before.min(), fdg_after.min()))
     hi = float(max(fdg_before.max(), fdg_after.max()))
     plt.plot([lo, hi], [lo, hi], "k--", lw=1, label="no change (y=x)")
     plt.xlabel("FD-gain pretrained")
     plt.ylabel("FD-gain fine-tuned")
-    plt.title(f"FD-gain before vs after — {TASK} (n={n}, win rate {win_rate:.0f}%)")
+    plt.title(f"FD-gain before vs after (n={n}, win rate {win_rate:.0f}%)")
     plt.legend()
     plt.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, f"ft_{TASK}_fdg_scatter.png"), dpi=150)
+    plt.savefig(os.path.join(results_dir, f"ft_{tag}_fdg_scatter.png"), dpi=150)
 
-    # 2) distribution of ΔFD-gain across patients
+    # 2) paired before/after predicted-FD scatter, per task (below y=x improved)
+    plt.figure(figsize=(6, 6))
+    for t in present:
+        m = task_mask(t)
+        plt.scatter(
+            fd_pred_before[m],
+            fd_pred_after[m],
+            s=18,
+            alpha=0.6,
+            color=TASK_COLORS[t],
+            label=t,
+        )
+    lo = float(min(fd_pred_before.min(), fd_pred_after.min()))
+    hi = float(max(fd_pred_before.max(), fd_pred_after.max()))
+    plt.plot([lo, hi], [lo, hi], "k--", lw=1, label="no change (y=x)")
+    plt.xlabel("FD pretrained")
+    plt.ylabel("FD fine-tuned")
+    plt.title("Predicted FD before vs after (below y=x = improved)")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, f"ft_{tag}_fd_pred_scatter.png"), dpi=150)
+
+    # 3) ΔFD-gain vs pretrained FD-gain, per task (does fine-tuning help most
+    #    where the generalist was weakest?)
+    plt.figure(figsize=(6, 6))
+    for t in present:
+        m = task_mask(t)
+        plt.scatter(
+            fdg_before[m], delta[m], s=18, alpha=0.6, color=TASK_COLORS[t], label=t
+        )
+    # overall moving-average trend across all tasks: sort by pretrained FD-gain,
+    # then average ΔFD-gain in a centered window at every point. Windows are
+    # truncated at the ends so the line spans the full x-range.
+    order = np.argsort(fdg_before)
+    xs, ys = fdg_before[order], delta[order]
+    w = max(5, len(xs) // 20)
+    if len(xs) >= 2:
+        h = w // 2
+        ys_ma = np.array([ys[max(0, i - h) : i + h + 1].mean() for i in range(len(ys))])
+        plt.plot(xs, ys_ma, color="black", lw=2, label=f"moving avg (w={w})")
+    plt.axhline(0, color="k", lw=1)
+    plt.xlabel("FD-gain pretrained")
+    plt.ylabel("ΔFD-gain (fine-tuned − pretrained)")
+    plt.title("ΔFD-gain vs pretrained FD-gain")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, f"ft_{tag}_delta_vs_pretrained.png"), dpi=150)
+
+    # 4) distribution of ΔFD-gain across patients, smoothed per task with a
+    #    Gaussian KDE — overlaid histograms were too jagged to tell apart.
     plt.figure(figsize=(8, 5))
-    plt.hist(delta, bins=30, color="tab:blue", alpha=0.8)
+    pad = 0.05 * (delta.max() - delta.min())
+    grid = np.linspace(delta.min() - pad, delta.max() + pad, 300)
+    for t in present:
+        d = delta[task_mask(t)]
+        # scipy's gaussian_kde needs ≥2 points and non-zero variance
+        if d.size < 2 or np.ptp(d) == 0:
+            continue
+        density = gaussian_kde(d)(grid)
+        plt.plot(
+            grid,
+            density,
+            color=TASK_COLORS[t],
+            lw=2,
+            label=f"{t} (mean {d.mean():+.3f})",
+        )
+        plt.fill_between(grid, density, color=TASK_COLORS[t], alpha=0.2)
     plt.axvline(0, color="k", lw=1)
-    plt.axvline(delta.mean(), color="tab:red", lw=2, label=f"mean {delta.mean():+.3f}")
+    plt.axvline(
+        delta.mean(),
+        color="tab:red",
+        lw=2,
+        ls="--",
+        label=f"overall mean {delta.mean():+.3f}",
+    )
     plt.xlabel("ΔFD-gain (fine-tuned − pretrained)")
-    plt.ylabel("# patients")
-    plt.title(f"ΔFD-gain distribution — {TASK}")
+    plt.ylabel("density")
+    plt.title("ΔFD-gain distribution (Gaussian KDE per task)")
     plt.legend()
     plt.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, f"ft_{TASK}_delta_hist.png"), dpi=150)
+    plt.savefig(os.path.join(results_dir, f"ft_{tag}_delta_kde.png"), dpi=150)
 
-    # 3) per-dimension mean MSE (physical units), pretrained vs fine-tuned
+    # 5) per-dimension mean MSE, pretrained vs fine-tuned (aggregated over tasks).
+    # Rotations are stored in rad²; scale by (50 mm)² (head radius) so they are
+    # comparable to the translation dims in mm² instead of vanishing near zero.
+    rot_scale_sq = 50.0**2
     mse_before = np.array([cols[f"mse_{d}_before"].mean() for d in DIMS])
     mse_after = np.array([cols[f"mse_{d}_after"].mean() for d in DIMS])
+    mse_before[3:6] *= rot_scale_sq
+    mse_after[3:6] *= rot_scale_sq
     xpos = np.arange(len(DIMS))
     width = 0.38
     plt.figure(figsize=(9, 5))
     plt.bar(xpos - width / 2, mse_before, width, label="pretrained")
     plt.bar(xpos + width / 2, mse_after, width, label="fine-tuned")
     plt.xticks(xpos, DIMS)
-    plt.ylabel("mean MSE (physical units)")
-    plt.title(f"Per-dimension MSE — {TASK}")
+    plt.ylabel("mean MSE (mm²; rotations ×50²)")
+    plt.title("Per-dimension MSE — pretrained vs fine-tuned")
     plt.legend()
     plt.grid(alpha=0.3, axis="y")
     plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, f"ft_{TASK}_mse_per_dim.png"), dpi=150)
+    plt.savefig(os.path.join(results_dir, f"ft_{tag}_mse_per_dim.png"), dpi=150)
 
-    # 4) fd_pred before vs after (paired box) against the shared baseline
-    plt.figure(figsize=(7, 5))
-    plt.boxplot(
-        [cols["fd_pred_before"], cols["fd_pred_after"], cols["fd_base"]],
-        labels=["pretrained", "fine-tuned", "baseline"],
-        showmeans=True,
-    )
-    plt.ylabel("mean FD per patient")
-    plt.title(f"Predicted FD vs previous-frame baseline — {TASK}")
-    plt.grid(alpha=0.3, axis="y")
+    # 6) frame-level win rate before vs after, per task (above y=x = fine-tuning
+    #    improved the fraction of frames that beat the previous-frame baseline)
+    pct_before = cols["pct_improved_before"]
+    pct_after = cols["pct_improved_after"]
+    plt.figure(figsize=(6, 6))
+    for t in present:
+        m = task_mask(t)
+        plt.scatter(
+            pct_before[m], pct_after[m], s=18, alpha=0.6, color=TASK_COLORS[t], label=t
+        )
+    lo = float(min(pct_before.min(), pct_after.min()))
+    hi = float(max(pct_before.max(), pct_after.max()))
+    plt.plot([lo, hi], [lo, hi], "k--", lw=1, label="no change (y=x)")
+    plt.xlabel("% frames improved — pretrained")
+    plt.ylabel("% frames improved — fine-tuned")
+    plt.title("Frame-level win rate before vs after")
+    plt.legend()
+    plt.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, f"ft_{TASK}_fd_pred_box.png"), dpi=150)
+    plt.savefig(
+        os.path.join(results_dir, f"ft_{tag}_pct_improved_scatter.png"), dpi=150
+    )
 
-    print(f"Wrote 4 figures to {results_dir}/ (task {TASK}, n={n})")
+    print(f"Wrote 6 figures to {results_dir}/ (tasks {present}, n={n})")
     plt.show()

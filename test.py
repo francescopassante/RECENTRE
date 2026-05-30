@@ -674,3 +674,59 @@ for d, ax in enumerate(axes.flat):
         ax.legend(fontsize=8)
 fig.tight_layout()
 save(fig, "07_patient_timeseries")
+
+
+# ==========================================================================================
+# 8) FD-gain vs motion magnitude — does the model still help on high-motion frames?
+# ==========================================================================================
+# Bin frames by baseline FD (the true previous→next motion). A next-frame
+# predictor can "win" on calm frames yet fail on the large motions that
+# actually corrupt the scan, so we check whether the gain holds as motion grows.
+# Quantile bins give roughly equal counts per bin despite the heavy FD tail.
+n_bins = 10
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+hi = 0
+for task in test_tasks:
+    m = sample_task_labels == task
+    b = fd_base_per_sample[m]
+    p = fd_pred_per_sample[m]
+    edges = np.unique(np.quantile(b, np.linspace(0, 1, n_bins + 1)))
+    idx = np.clip(np.digitize(b, edges[1:-1]), 0, len(edges) - 2)
+    centers, model_fd, gain = [], [], []
+    for k in range(len(edges) - 1):
+        sel = idx == k
+        if not sel.any():
+            continue
+        mean_base = b[sel].mean()
+        mean_pred = p[sel].mean()
+        centers.append(mean_base)
+        model_fd.append(mean_pred)
+        # aggregate gain per bin (robust to per-frame fd_base≈0)
+        gain.append((mean_base - mean_pred) / mean_base)
+    centers = np.array(centers)
+    model_fd = np.array(model_fd)
+    gain = np.array(gain)
+
+    axes[0].plot(centers, model_fd, "o-", color=TASK_COLORS[task], label=task)
+    axes[1].plot(centers, gain, "o-", color=TASK_COLORS[task], label=task)
+    hi = max(hi, centers.max(), model_fd.max())
+
+# left: model FD vs motion magnitude, with the previous-frame baseline (y = x);
+# points below the line mean the model beats the baseline at that motion level.
+hi *= 1.05
+axes[0].plot([0, hi], [0, hi], "k--", label="baseline (y = x)")
+axes[0].set_xlim(0, hi)
+axes[0].set_ylim(0, hi)
+axes[0].set_xlabel("Baseline FD = motion magnitude (mm)")
+axes[0].set_ylabel("Mean model FD (mm)")
+axes[0].set_title("Model FD vs motion magnitude")
+axes[0].legend()
+
+# right: FD-gain per motion bin — does the gain survive at high motion?
+axes[1].axhline(0, color="black")
+axes[1].set_xlabel("Baseline FD = motion magnitude (mm)")
+axes[1].set_ylabel("FD-gain  (baseline − model) / baseline")
+axes[1].set_title("FD-gain vs motion magnitude")
+axes[1].legend()
+fig.tight_layout()
+save(fig, "08_fdgain_vs_motion")
