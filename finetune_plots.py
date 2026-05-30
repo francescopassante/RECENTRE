@@ -5,12 +5,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 
-from finetuning import DIMS
+from finetune import DIMS
 
 """
 =======================================================================================
 Visual comparison of pretrained vs fine-tuned models from the summary CSV written
-by finetune_all.py. Reads the CSV only — no model loading — so it is cheap to
+by finetune.py. Reads the CSV only — no model loading — so it is cheap to
 re-run while iterating on plots.
 =======================================================================================
 """
@@ -32,7 +32,7 @@ def load_rows(csv_path):
     return cols
 
 
-# fixed color per task, matching test.py
+# fixed color per task, matching plots.py
 TASK_COLORS = {"R": "tab:blue", "M": "tab:orange", "L": "tab:green"}
 
 
