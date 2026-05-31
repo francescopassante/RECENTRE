@@ -18,7 +18,10 @@ DIMS = ["Tx", "Ty", "Tz", "Rx", "Ry", "Rz"]
 
 def load_task_dicts():
     """Load the per-task {patient_id: ndarray[T, 6]} dicts. Keys are strings."""
-    return {t: np.load(f"datasets/{t}_dict.npy", allow_pickle=True).item() for t in ("R", "M", "L")}
+    return {
+        t: np.load(f"datasets/{t}_dict.npy", allow_pickle=True).item()
+        for t in ("R", "M", "L")
+    }
 
 
 def summarize(out, sigma):
@@ -38,7 +41,9 @@ def summarize(out, sigma):
     }
 
 
-def build_patient_split(series_norm, patient_id, sequence_length, batch_size, split_percentages, device):
+def build_patient_split(
+    series_norm, patient_id, sequence_length, batch_size, split_percentages, device
+):
     """Chronological train/val/test split of one patient's normalized series.
 
     Splits raw frames into three disjoint arrays *before* windowing, so no
@@ -56,7 +61,9 @@ def build_patient_split(series_norm, patient_id, sequence_length, batch_size, sp
     }
     loaders, sizes = {}, {}
     for name, (s, shuffle) in splits.items():
-        ds = TimeSeriesDataset(s[None, :, :], [patient_id], sequence_length=sequence_length, device=device)
+        ds = TimeSeriesDataset(
+            s[None, :, :], [patient_id], sequence_length=sequence_length, device=device
+        )
         loaders[name] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
         sizes[name] = len(ds)
     return loaders, sizes
@@ -69,7 +76,9 @@ def build_finetune_model(pretrained_state, model_config, cfg, device):
     model.load_state_dict(pretrained_state)
 
     # Snapshot the pretrained weights as the L2-SP reference (theta_0)
-    reference = {name: param.clone().detach() for name, param in model.named_parameters()}
+    reference = {
+        name: param.clone().detach() for name, param in model.named_parameters()
+    }
 
     # Freeze the variance head (train only the other layers)
     for name, p in model.named_parameters():
@@ -78,15 +87,28 @@ def build_finetune_model(pretrained_state, model_config, cfg, device):
     # Reduce dropout during fine-tuning — the per-patient set is tiny
     model.dp.p = cfg["dropout_ft"]
 
-    gru_params = [p for n, p in model.named_parameters() if p.requires_grad and n.startswith(("gru", "bn_gru"))]
-    mlp_params = [p for n, p in model.named_parameters() if p.requires_grad and n.startswith(("fc1", "bn_fc1", "fc_mean"))]
+    gru_params = [
+        p
+        for n, p in model.named_parameters()
+        if p.requires_grad and n.startswith(("gru", "bn_gru"))
+    ]
+    mlp_params = [
+        p
+        for n, p in model.named_parameters()
+        if p.requires_grad and n.startswith(("fc1", "bn_fc1", "fc_mean"))
+    ]
     # weight_decay=0: L2-SP already regularizes toward the pretrained weights,
     # so an extra decay toward zero would pull against it.
     optimizer = torch.optim.Adam(
-        [{"params": gru_params, "lr": cfg["lr_gru"]}, {"params": mlp_params, "lr": cfg["lr_mlp"]}],
+        [
+            {"params": gru_params, "lr": cfg["lr_gru"]},
+            {"params": mlp_params, "lr": cfg["lr_mlp"]},
+        ],
         weight_decay=0.0,
     )
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=10
+    )
     return model, optimizer, scheduler, reference
 
 
@@ -102,8 +124,13 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
 
     # normalize with the pretraining-population stats (no per-patient leakage)
     series = (task_dicts[task][patient_id] - mu) / sigma
+    # the window length must match what the checkpoint was trained with; the
+    # checkpoint's own config wins over the finetune config to avoid a mismatch
+    seq_len = pretrained["config"]["data"].get(
+        "sequence_length", cfg.get("sequence_length", 10)
+    )
     loaders, sizes = build_patient_split(
-        series, patient_id, cfg["sequence_length"], cfg["batch_size"], cfg["split_percentages"], device
+        series, patient_id, seq_len, cfg["batch_size"], cfg["split_percentages"], device
     )
 
     # BEFORE: the pretrained generalist on this patient's test split
@@ -168,21 +195,23 @@ if __name__ == "__main__":
     cfg["split_percentages"] = tuple(cfg["split_percentages"])
 
     device = torch.device(
-        "cuda" if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available()
-        else "cpu"
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     print(f"device: {device}  config: {config_path}")
 
     pretrained = torch.load(cfg["pretrained"], map_location=device, weights_only=False)
     task_dicts = load_task_dicts()
 
-    # Held-out patients (never seen during pretraining). IDs are strings.
+    # Held-out patients (never seen during pretraining)
     test_ids = [str(i) for i in pretrained["test_ids"]]
 
     results_dir = "results/finetune"
     os.makedirs(results_dir, exist_ok=True)
-    csv_path = os.path.join(results_dir, f"ft_{'+'.join(cfg['tasks'])}_before_after.csv")
+    csv_path = os.path.join(
+        results_dir, f"ft_{'+'.join(cfg['tasks'])}_before_after.csv"
+    )
 
     # One row per (task, patient); the row records its task, so all tasks share one CSV.
     rows = []
@@ -191,14 +220,28 @@ if __name__ == "__main__":
         for patient_id in tqdm.tqdm(test_ids, desc=f"fine-tuning ({task})"):
             if patient_id not in task_dict:
                 continue  # patient lacks this task's series
-            rows.append(finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device))
+            rows.append(
+                finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device)
+            )
 
     # column order: identifiers first, then the comparison metrics
     fieldnames = [
-        "patient_id", "task", "n_train", "n_val", "n_test", "best_epoch",
-        "fd_base", "fdg_before", "fdg_after", "delta_fdg",
-        "fd_pred_before", "fd_pred_after", "mse_before", "mse_after",
-        "pct_improved_before", "pct_improved_after",
+        "patient_id",
+        "task",
+        "n_train",
+        "n_val",
+        "n_test",
+        "best_epoch",
+        "fd_base",
+        "fdg_before",
+        "fdg_after",
+        "delta_fdg",
+        "fd_pred_before",
+        "fd_pred_after",
+        "mse_before",
+        "mse_after",
+        "pct_improved_before",
+        "pct_improved_after",
     ]
     for d in DIMS:
         fieldnames += [f"mse_{d}_before", f"mse_{d}_after"]
@@ -220,6 +263,8 @@ if __name__ == "__main__":
             win_rate = 100 * sum(d > 0 for d in deltas) / m
             q1 = deltas[int(0.25 * (m - 1))]
             q3 = deltas[int(0.75 * (m - 1))]
-            print(f"  {task}: n={m} | mean ΔFD-gain={mean_delta:+.4f} | win={win_rate:.1f}% | IQR=[{q1:+.4f}, {q3:+.4f}]")
+            print(
+                f"  {task}: n={m} | mean ΔFD-gain={mean_delta:+.4f} | win={win_rate:.1f}% | IQR=[{q1:+.4f}, {q3:+.4f}]"
+            )
     else:
         print(f"No patients processed for tasks {cfg['tasks']}.")

@@ -13,28 +13,41 @@ from models import build_model
 # Usage: python train.py [configs/your_config.yaml]
 config_path = sys.argv[1] if len(sys.argv) > 1 else "configs/gru_generalist.yaml"
 config = yaml.safe_load(open(config_path))
-m, d, t = config["model"], config["data"], config["train"]
+model_config, data_config, train_config = (
+    config["model"],
+    config["data"],
+    config["train"],
+)
 
 device = torch.device(
-    "cuda" if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available()
-    else "cpu"
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available() else "cpu"
 )
 print(f"device: {device}  config: {config_path}")
 
-train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids = split_data(
-    train_task=d["train_task"],
-    test_task=d["test_task"],
-    split_percentages=tuple(d["split_percentages"]),
-    batch_size=d["batch_size"],
-    cross_patients=d["cross_patients"],
-    device=device,
+train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids = (
+    split_data(
+        train_task=data_config["train_task"],
+        test_task=data_config["test_task"],
+        split_percentages=tuple(data_config["split_percentages"]),
+        batch_size=data_config["batch_size"],
+        cross_patients=data_config["cross_patients"],
+        sequence_length=data_config.get("sequence_length", 10),
+        device=device,
+    )
 )
 
-model = build_model(m).to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=t["lr"], weight_decay=t["weight_decay"])
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
+# Build model from config
+model = build_model(model_config).to(device)
+optimizer = torch.optim.Adam(
+    model.parameters(), lr=train_config["lr"], weight_decay=train_config["weight_decay"]
+)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer, mode="min", factor=0.5, patience=10
+)
 
+# Train model and save the best state
 best_state, best_epoch, train_loss_history, val_loss_history = fit(
     model,
     train_loader,
@@ -42,22 +55,21 @@ best_state, best_epoch, train_loss_history, val_loss_history = fit(
     optimizer,
     scheduler,
     device,
-    epochs=t["epochs"],
+    epochs=train_config["epochs"],
     mu=mu,
     sigma=sigma,
-    loss=t["loss"],
-    beta=t["beta"],
-    patience=t["patience"],
+    loss=train_config["loss"],
+    beta=train_config["beta"],
+    patience=train_config["patience"],
 )
 
+# Load the best state
 model.load_state_dict(best_state)
 
-# predicted-σ distribution on the val set at the best weights, in normalized space.
-# evaluate.py uses it to pick a percentile threshold for the uncertainty experiment.
-pred_sigma = evaluate(model, val_loader, mu, sigma, device)["sigma_norm"]
+# evaluate on val set to get the predicted sigma distribution
+pred_sigma = evaluate(model, val_loader, mu, sigma, device)["std"]
 
-# the whole config travels with the checkpoint, so eval/compare can rebuild the
-# exact model without hardcoding any hyperparameters.
+# build checkpoint to save to file with config, model weights, ...
 checkpoint = {
     "config": config,
     "model_state": best_state,
@@ -72,7 +84,7 @@ checkpoint = {
 
 out_dir = config.get("output_dir", "checkpoints")
 os.makedirs(out_dir, exist_ok=True)
-name = f"{m['type']}_{d['train_task']}v{d['test_task']}_beta{t['beta']}_ep{t['epochs']}"
+name = f"{model_config['type']}_{data_config['train_task']}v{data_config['test_task']}_beta{train_config['beta']}_ep{train_config['epochs']}"
 checkpoint_path = os.path.join(out_dir, f"{name}.pth")
 torch.save(checkpoint, checkpoint_path)
 print(f"saved {checkpoint_path}  (best epoch {best_epoch})")

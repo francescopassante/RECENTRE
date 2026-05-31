@@ -44,7 +44,7 @@ A flat set of modules, deliberately simple (no packages, no type hints, no abstr
 
 **Data flow (`preprocessing.py`):** raw HCP txt → discard last 6 derivative columns → deg→rad on rotation cols → filter to patients that have all three tasks (Resting / Memory / Language) → save one `.npy` dict per task. Each dict is `{patient_id: ndarray[T, 6]}` with fixed `T` per task (Resting=1200, Memory=405, Language=316).
 
-**Config-driven checkpoints:** `train.py` embeds the whole config dict in the checkpoint (`ckpt["config"]`), alongside `model_state`, `mu`, `sigma`, `train/val/test_ids`, `best_epoch`, and `pred_sigma` (the val σ distribution in normalized space, for the uncertainty experiment). `evaluate.py`/`compare.py`/`finetune.py` rebuild the model with `build_model(ckpt["config"]["model"])` — **no model hyperparameters are hardcoded anywhere in the eval scripts**.
+**Config-driven checkpoints:** `train.py` embeds the whole config dict in the checkpoint (`ckpt["config"]`), alongside `model_state`, `mu`, `sigma`, `train/val/test_ids`, `best_epoch`, and `pred_sigma` (the val predicted-std distribution in physical units, for the uncertainty experiment). `evaluate.py`/`compare.py`/`finetune.py` rebuild the model with `build_model(ckpt["config"]["model"])` — **no model hyperparameters are hardcoded anywhere in the eval scripts**.
 
 **Split convention (`dataset.py:split_data`):** if train and test tasks overlap, patients are split into disjoint train/val/test sets (seeded `rng=42`) to avoid leakage; otherwise train uses all patients and only val/test are split. `mu`/`sigma` are computed on train frames per-dimension and stored in the checkpoint.
 

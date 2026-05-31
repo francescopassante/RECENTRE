@@ -32,13 +32,13 @@ def fit(
     reference=None,
     lambda_l2sp=0.0,
 ):
-    """One training loop used for both pretraining and per-patient fine-tuning.
+    """Training loop used for both pretraining and per-patient fine-tuning.
 
     loss is "gaussian_nll" (uses the variance head) or "mse" (uses the mean only).
     Pass a reference state dict + lambda_l2sp > 0 to add the L2-SP penalty
     (fine-tuning); leave them at the defaults to disable it (pretraining).
 
-    Early stopping and model selection use validation FD-gain (not the loss).
+    Early stopping and model selection use validation FD-gain.
     Returns (best_state, best_epoch, train_loss_history, val_loss_history).
     """
     mu_t = torch.tensor(mu, dtype=torch.float32, device=device)
@@ -56,10 +56,11 @@ def fit(
     pbar = tqdm.trange(epochs)
     for epoch in pbar:
         model.train()
-        # accumulate sample-weighted base loss so the per-sample mean is correct
-        # even when the last batch is smaller than the rest
+        # accumulate sample-weighted loss
         train_base_sum = torch.zeros((), device=device)
+        # count samples in the batch
         train_n = 0
+        # store fd for baseline and model frame by frame
         train_fd_bases = []
         train_fd_preds = []
         for _, x, y in train_loader:
@@ -69,25 +70,32 @@ def fit(
 
             base = nll(mean, y, var) if loss == "gaussian_nll" else mse(mean, y)
 
+            # baseline prediction is just the last frame
             last_x = x[:, -1, :]
             fd_base = fd(last_x, y, mu_t, sigma_t)
             fd_pred = fd(mean, y, mu_t, sigma_t)
             gain = fd_gain(fd_base, fd_pred)
 
             total = base - beta * gain.mean()
+
+            # add L2SP if finetuning
             if reference is not None and lambda_l2sp > 0:
                 total = total + lambda_l2sp * l2sp(model, reference)
+
             total.backward()
             optimizer.step()
 
             bs = y.size(0)
-            train_base_sum += base.detach() * bs
             train_n += bs
+            train_base_sum += base.detach() * bs
+
             train_fd_bases.append(fd_base.detach())
             train_fd_preds.append(fd_pred.detach())
 
         train_base = (train_base_sum / train_n).item()
-        train_fdg = fd_gain(torch.cat(train_fd_bases), torch.cat(train_fd_preds)).mean().item()
+        train_fdg = (
+            fd_gain(torch.cat(train_fd_bases), torch.cat(train_fd_preds)).mean().item()
+        )
         train_loss = train_base - beta * train_fdg
 
         model.eval()
@@ -100,14 +108,18 @@ def fit(
                 x, y = x.to(device), y.to(device)
                 mean, var = model(x)
                 bs = y.size(0)
-                val_base_sum += (nll(mean, y, var) if loss == "gaussian_nll" else mse(mean, y)) * bs
+                val_base_sum += (
+                    nll(mean, y, var) if loss == "gaussian_nll" else mse(mean, y)
+                ) * bs
                 val_n += bs
                 last_x = x[:, -1, :]
                 val_fd_bases.append(fd(last_x, y, mu_t, sigma_t))
                 val_fd_preds.append(fd(mean, y, mu_t, sigma_t))
 
             val_base = (val_base_sum / val_n).item()
-            val_fdg = fd_gain(torch.cat(val_fd_bases), torch.cat(val_fd_preds)).mean().item()
+            val_fdg = (
+                fd_gain(torch.cat(val_fd_bases), torch.cat(val_fd_preds)).mean().item()
+            )
             val_loss = val_base - beta * val_fdg
 
         scheduler.step(val_loss)

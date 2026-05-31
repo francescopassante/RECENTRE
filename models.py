@@ -67,7 +67,7 @@ MODELS = {"gru": GRUModel}
 
 
 def build_model(model_config):
-    """Build a model from a config dict like {"type": "gru", "hidden_dim": 128, ...}."""
+    """Build a model from a yaml config dict like {"type": "gru", "hidden_dim": 128, ...}."""
     config = dict(model_config)
-    kind = config.pop("type")
+    kind = config.pop("type")  # pop returns the value and removes it from the dict
     return MODELS[kind](**config)

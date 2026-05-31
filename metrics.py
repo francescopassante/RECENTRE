@@ -9,7 +9,7 @@ def fd(pred_frame, true_frame, mu=0, sigma=1, scale_rot=True, dimension_dim=1):
     translation_error = torch.abs(pred_frame[:, :3] - true_frame[:, :3]).sum(
         dim=dimension_dim
     )
-    factor = 1 if not scale_rot else 50
+    factor = 50 if scale_rot else 1
     rotation_error = factor * torch.abs(pred_frame[:, 3:] - true_frame[:, 3:]).sum(
         dim=dimension_dim
     )
@@ -27,23 +27,25 @@ def evaluate(model, loader, mu, sigma, device, sigma_threshold=None):
 
     Returns a dict of numpy arrays, all with batch dimension N:
       pred, true, base, std   [N, 6] in physical (denormalized) units, NO ×50 rotation scaling
-      sigma_norm              [N, 6] predicted σ in normalized space (for the uncertainty threshold)
       fd_pred, fd_base        [N]    framewise displacement in mm (rotations ×50 inside fd)
       z                       [N, 6] standardized residual (y − μ_pred) / σ_pred, in normalized space
       ids                     [N]    patient id per sample
       nll                     scalar mean Gaussian NLL
 
-    If sigma_threshold (array of 6) is given, predictions whose σ exceeds the
-    threshold in any dimension are replaced by the previous-frame baseline.
+    If sigma_threshold (array of 6, physical units) is given, predictions whose
+    std exceeds the threshold in any dimension are replaced by the previous-frame
+    baseline.
     """
     model.eval()
     mu_t = torch.tensor(mu, dtype=torch.float32, device=device)
     sigma_t = torch.tensor(sigma, dtype=torch.float32, device=device)
     if sigma_threshold is not None:
-        sigma_threshold = torch.tensor(sigma_threshold, dtype=torch.float32, device=device)
+        sigma_threshold = torch.tensor(
+            sigma_threshold, dtype=torch.float32, device=device
+        )
     criterion = torch.nn.GaussianNLLLoss()
 
-    preds, trues, bases, stds, sigmas_norm = [], [], [], [], []
+    preds, trues, bases, stds = [], [], [], []
     fd_preds, fd_bases, zs, ids = [], [], [], []
     nll_sum, n = 0.0, 0
     with torch.no_grad():
@@ -52,10 +54,11 @@ def evaluate(model, loader, mu, sigma, device, sigma_threshold=None):
             # model returns (mean, variance) — variance already exp'd inside the model
             mean, var = model(x)
             last_x = x[:, -1, :]
+            std = var.sqrt() * sigma_t  # predicted std in physical (denormalized) units
 
             if sigma_threshold is not None:
-                # if the model is uncertain (σ above threshold in any dim), fall back to the baseline
-                uncertain = (var.sqrt() > sigma_threshold).any(dim=1)
+                # if the model is uncertain (std above threshold in any dim), fall back to the baseline
+                uncertain = (std > sigma_threshold).any(dim=1)
                 mean[uncertain] = last_x[uncertain]
 
             bs = y.size(0)
@@ -69,8 +72,7 @@ def evaluate(model, loader, mu, sigma, device, sigma_threshold=None):
             preds.append((mean * sigma_t + mu_t).cpu().numpy())
             trues.append((y * sigma_t + mu_t).cpu().numpy())
             bases.append((last_x * sigma_t + mu_t).cpu().numpy())
-            stds.append((var.sqrt() * sigma_t).cpu().numpy())
-            sigmas_norm.append(var.sqrt().cpu().numpy())
+            stds.append(std.cpu().numpy())
             ids.extend(list(p))
 
     return {
@@ -78,7 +80,6 @@ def evaluate(model, loader, mu, sigma, device, sigma_threshold=None):
         "true": np.concatenate(trues),
         "base": np.concatenate(bases),
         "std": np.concatenate(stds),
-        "sigma_norm": np.concatenate(sigmas_norm),
         "fd_pred": np.concatenate(fd_preds),
         "fd_base": np.concatenate(fd_bases),
         "z": np.concatenate(zs),

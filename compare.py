@@ -66,7 +66,8 @@ def run_eval(checkpoint_path):
     for task in test_tasks:
         task_dict = np.load(f"datasets/{task}_dict.npy", allow_pickle=True).item()
         data = (np.array([task_dict[pid] for pid in test_ids]) - mu) / sigma
-        loader = GPUBatchLoader(TimeSeriesDataset(data, test_ids, device=device), batch_size=1024, shuffle=False)
+        seq_len = config["data"].get("sequence_length", 10)
+        loader = GPUBatchLoader(TimeSeriesDataset(data, test_ids, sequence_length=seq_len, device=device), batch_size=1024, shuffle=False)
         out = evaluate(model, loader, mu, sigma, device)
         # rotations ×50 -> mm for the value-level (MAE / σ) metrics
         p, t, s = out["pred"].copy(), out["true"].copy(), out["std"].copy()
