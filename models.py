@@ -1,11 +1,5 @@
 import torch.nn as nn
 
-"""
-========================================================================================================================
-Change from previous version: removed funny comments and changed the output to y + x[-1] instead of (x[-1] - y)
-========================================================================================================================
-"""
-
 
 class GRUModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers=1, dropout=0.1):
@@ -20,7 +14,7 @@ class GRUModel(nn.Module):
         super(GRUModel, self).__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
-        self.dp = nn.Dropout(p=0.25)
+        self.dp = nn.Dropout(p=dropout)
         # GRU layer
         self.gru = nn.GRU(
             input_dim, hidden_dim, num_layers, batch_first=True, dropout=dropout
@@ -31,7 +25,7 @@ class GRUModel(nn.Module):
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
         self.bn_fc1 = nn.LayerNorm(hidden_dim)
         self.fc_mean = nn.Linear(hidden_dim, output_dim)
-        self.fc_logvar = nn.Linear(hidden_dim, 6)
+        self.fc_logvar = nn.Linear(hidden_dim, output_dim)
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -63,4 +57,17 @@ class GRUModel(nn.Module):
         y_mean = self.fc_mean(h_n)  # Shape [batch_size, output_dim]
         y_logvar = self.fc_logvar(h_n)
 
+        # the mean head predicts a residual added to the last input frame;
+        # variance is returned already exponentiated (do not exp again in callers)
         return (x[:, -1, :] + y_mean), y_logvar.exp()
+
+
+# Add a new architecture by writing its class above and giving it a name here.
+MODELS = {"gru": GRUModel}
+
+
+def build_model(model_config):
+    """Build a model from a yaml config dict like {"type": "gru", "hidden_dim": 128, ...}."""
+    config = dict(model_config)
+    kind = config.pop("type")  # pop returns the value and removes it from the dict
+    return MODELS[kind](**config)
