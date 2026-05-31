@@ -64,3 +64,4 @@ A flat set of modules, deliberately simple (no packages, no type hints, no abstr
 - Models return **(mean, variance)**, not (mean, logvar). The exp happens inside the model.
 - Checkpoints are self-describing: they embed `config`, `mu`, `sigma`, `test_ids`. Eval reloads the per-task dict from `datasets/{task}_dict.npy` (no re-running preprocessing) and rebuilds the model from the embedded config.
 - `evaluate()` is the single evaluation path. Don't reintroduce per-script eval loops.
+- When a run produces a new **fundamental** result (a new architecture beating the baseline, a qualitatively new finding, a changed headline number), update `README.md`: copy the relevant figure(s) into `assets/` and add or revise the explanation there. Don't churn the README for routine re-runs — only when the story changes.
