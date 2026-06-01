@@ -1,9 +1,11 @@
 import os
 import sys
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch.utils.flop_counter import FlopCounterMode
 
 import plots
 from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
@@ -163,3 +165,49 @@ save(
     plots.fdgain_vs_motion(fd_pred, fd_base, task_labels, test_tasks),
     "08_fdgain_vs_motion",
 )
+
+# Model profile: parameter count, on-disk size, FLOPs and inference latency.
+# Single-frame latency is the one that matters for real-time prediction; we also
+# report a batched throughput so different architectures can be compared fairly.
+seq_len = config["data"].get("sequence_length", 10)
+n_params = sum(p.numel() for p in model.parameters())
+n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+size_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / 1e6
+
+# FLOPs for a single forward pass on one frame-window (×2 gives MACs -> FLOPs is
+# what FlopCounterMode already reports as multiply-adds, kept as-is for comparison).
+model.eval()
+one = torch.randn(1, seq_len, config["model"]["input_dim"], device=device)
+with torch.no_grad(), FlopCounterMode(display=False) as fc:
+    model(one)
+flops_per_sample = fc.get_total_flops()
+
+
+def time_batch(batch_size, warmup=3, runs=20):
+    xb = torch.randn(batch_size, seq_len, config["model"]["input_dim"], device=device)
+    with torch.no_grad():
+        for _ in range(warmup):
+            model(xb)
+        t = time.perf_counter()
+        for _ in range(runs):
+            model(xb)
+        return (time.perf_counter() - t) / runs
+
+
+latency_single = time_batch(1)  # real-time, one frame at a time
+batch_size = 1024
+latency_batch = time_batch(batch_size)
+throughput = batch_size / latency_batch  # samples/sec at the batched rate
+
+profile_rows = [
+    ["Architecture", config["model"]["type"]],
+    ["Total parameters", f"{n_params:,}"],
+    ["Trainable parameters", f"{n_trainable:,}"],
+    ["Model size (float32)", f"{size_mb:.3f} MB"],
+    ["FLOPs / forward (1 window)", f"{flops_per_sample:,} ({flops_per_sample / 1e6:.2f} M)"],
+    ["Latency, single frame", f"{latency_single * 1e3:.3f} ms"],
+    [f"Latency, batch of {batch_size}", f"{latency_batch * 1e3:.3f} ms"],
+    ["Throughput (batched)", f"{throughput:,.0f} samples/s"],
+    ["Device", device],
+]
+save(plots.model_profile(profile_rows, tag), "09_model_profile")

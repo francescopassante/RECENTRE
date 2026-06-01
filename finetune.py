@@ -159,7 +159,11 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
         lambda_l2sp=cfg["lambda_l2sp"],
     )
     model.load_state_dict(best_state)
-    after = summarize(evaluate(model, loaders["test"], mu, sigma, device), sigma)
+    # keep the full per-frame arrays (not just the scalar summary): these are the
+    # fine-tuned model's predictions on this patient's held-out test frames, which
+    # the pooled .npz collects so plots.py can characterize the fine-tuned collection.
+    after_out = evaluate(model, loaders["test"], mu, sigma, device)
+    after = summarize(after_out, sigma)
 
     row = {
         "patient_id": str(patient_id),
@@ -183,7 +187,7 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
     for i, d in enumerate(DIMS):
         row[f"mse_{d}_before"] = before["mse_per_dim"][i]
         row[f"mse_{d}_after"] = after["mse_per_dim"][i]
-    return row
+    return row, after_out
 
 
 if __name__ == "__main__":
@@ -209,20 +213,40 @@ if __name__ == "__main__":
 
     results_dir = "results/finetune"
     os.makedirs(results_dir, exist_ok=True)
-    csv_path = os.path.join(
-        results_dir, f"ft_{'+'.join(cfg['tasks'])}_before_after.csv"
-    )
+    tag = "+".join(cfg["tasks"])
+    csv_path = os.path.join(results_dir, f"ft_{tag}_before_after.csv")
+    npz_path = os.path.join(results_dir, f"ft_{tag}_arrays.npz")
 
     # One row per (task, patient); the row records its task, so all tasks share one CSV.
+    # pooled holds every patient's fine-tuned test-frame arrays, concatenated across
+    # the whole sweep (each patient scored by its own fine-tuned model) — this is the
+    # frame-level dataset that represents the fine-tuned collection for plots.py.
     rows = []
+    pooled = {
+        k: []
+        for k in (
+            "pred",
+            "true",
+            "base",
+            "std",
+            "z",
+            "fd_pred",
+            "fd_base",
+            "ids",
+            "task",
+        )
+    }
     for task in cfg["tasks"]:
         task_dict = task_dicts[task]
         for patient_id in tqdm.tqdm(test_ids, desc=f"fine-tuning ({task})"):
-            if patient_id not in task_dict:
-                continue  # patient lacks this task's series
-            rows.append(
-                finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device)
+            row, after_out = finetune_patient(
+                patient_id, task, pretrained, task_dicts, cfg, device
             )
+            rows.append(row)
+            for k in ("pred", "true", "base", "std", "z", "fd_pred", "fd_base", "ids"):
+                pooled[k].append(after_out[k])
+            # one task label per frame, aligned with the arrays above
+            pooled["task"].append(np.full(len(after_out["fd_pred"]), task))
 
     # column order: identifiers first, then the comparison metrics
     fieldnames = [
@@ -250,21 +274,8 @@ if __name__ == "__main__":
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+    print(f"Saved per-patient before/after metrics -> {csv_path}")
 
-    # quick summary to stdout — overall and per task
-    if rows:
-        print(f"\nSaved {len(rows)} rows -> {csv_path}")
-        for task in cfg["tasks"]:
-            deltas = sorted(r["delta_fdg"] for r in rows if r["task"] == task)
-            m = len(deltas)
-            if not m:
-                continue
-            mean_delta = sum(deltas) / m
-            win_rate = 100 * sum(d > 0 for d in deltas) / m
-            q1 = deltas[int(0.25 * (m - 1))]
-            q3 = deltas[int(0.75 * (m - 1))]
-            print(
-                f"  {task}: n={m} | mean ΔFD-gain={mean_delta:+.4f} | win={win_rate:.1f}% | IQR=[{q1:+.4f}, {q3:+.4f}]"
-            )
-    else:
-        print(f"No patients processed for tasks {cfg['tasks']}.")
+    # pooled frame-level arrays for the fine-tuned collection (feeds finetune_plots.py)
+    np.savez(npz_path, **{k: np.concatenate(v) for k, v in pooled.items()})
+    print(f"Saved pooled arrays -> {npz_path}")

@@ -397,3 +397,24 @@ def fdgain_vs_motion(fd_pred, fd_base, sample_task_labels, test_tasks):
     axes[1].legend()
     fig.tight_layout()
     return fig
+
+
+# 9) Model profile — size / parameters / FLOPs / inference time, as a plain table.
+# rows is a list of [metric, value] pairs already formatted as strings in evaluate.py.
+def model_profile(rows, tag):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.axis("off")
+    fig.suptitle(f"Model profile — {tag}")
+
+    tbl = ax.table(
+        cellText=rows,
+        colLabels=["Metric", "Value"],
+        cellLoc="left",
+        colLoc="left",
+        loc="center",
+        bbox=[0.05, 0.05, 0.9, 0.85],
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    tbl.auto_set_column_width([0, 1])
+    return fig
