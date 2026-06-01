@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 
+import plots
 from finetune import DIMS
 
 """
@@ -204,5 +205,44 @@ if __name__ == "__main__":
         os.path.join(results_dir, f"ft_{tag}_pct_improved_scatter.png"), dpi=150
     )
 
-    print(f"Wrote 6 figures to {results_dir}/ (tasks {present}, n={n})")
+    # 7) per-patient FD gain for the fine-tuned collection — plots.py figure 04,
+    #    built straight from the CSV (one scalar per patient, no model needed).
+    #    Each patient is scored by its own fine-tuned model on its own test frames.
+    fd_pp_pred = {t: fd_pred_after[task_mask(t)] for t in present}
+    fd_pp_base = {t: cols["fd_base"][task_mask(t)] for t in present}
+    fdg_pp = {t: fdg_after[task_mask(t)] for t in present}
+    fig = plots.per_patient_fdg(fd_pp_pred, fd_pp_base, fdg_pp, present)
+    fig.savefig(os.path.join(results_dir, f"ft_{tag}_04_per_patient_fdg.png"), dpi=150)
+    plt.close(fig)
+
+    # 8+) frame-level figures for the fine-tuned collection, reusing plots.py on the
+    #     pooled .npz written by finetune.py. Only available after re-running the sweep.
+    npz_path = os.path.join(results_dir, f"ft_{tag}_arrays.npz")
+    n_frame_figs = 0
+    if os.path.exists(npz_path):
+        arr = np.load(npz_path, allow_pickle=True)
+        # rotations ×50 -> mm for display, matching evaluate.py's convention
+        fpred, ftrue, fbase = arr["pred"].copy(), arr["true"].copy(), arr["base"].copy()
+        for a in (fpred, ftrue, fbase):
+            a[:, 3:6] *= 50
+        flabels = arr["task"]
+        fpresent = [t for t in ("R", "M", "L") if np.any(flabels == t)]
+
+        frame_figs = [
+            ("01_error_per_dimension", plots.error_per_dimension(fpred, ftrue, fbase, flabels, fpresent)),
+            ("02_true_vs_predicted", plots.true_vs_predicted(fpred, ftrue, flabels, fpresent)),
+            ("03_fd_distribution", plots.fd_distribution(arr["fd_pred"], arr["fd_base"], flabels, fpresent)),
+            ("06_sigma_calibration", plots.sigma_calibration(arr["z"], flabels, fpresent)),
+            ("08_fdgain_vs_motion", plots.fdgain_vs_motion(arr["fd_pred"], arr["fd_base"], flabels, fpresent)),
+        ]
+        for name, fig in frame_figs:
+            fig.savefig(os.path.join(results_dir, f"ft_{tag}_{name}.png"), dpi=150)
+            plt.close(fig)
+        n_frame_figs = len(frame_figs)
+    else:
+        print(f"(no {npz_path} yet — re-run finetune.py to get frame-level figures)")
+
+    print(
+        f"Wrote {7 + n_frame_figs} figures to {results_dir}/ (tasks {present}, n={n})"
+    )
     plt.show()
