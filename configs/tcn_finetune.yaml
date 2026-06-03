@@ -1,0 +1,17 @@
+# Per-patient fine-tuning of a pretrained generalist TCN.
+# The model architecture is read from the pretrained checkpoint, so it is not
+# repeated here — only the fine-tuning knobs live below.
+pretrained: checkpoints/generalist/tcn_R+M+LvR+M+L_beta0.5_ep150.pth
+tasks: [R, M, L]
+
+sequence_length: 10
+batch_size: 16384
+split_percentages: [0.5, 0.3, 0.2]   # chronological train/val/test of one patient's frames
+
+beta: 0.5
+epochs: 30
+patience: 20
+lambda_l2sp: 1.0e-3
+lr_gru: 1.0e-4     # small LR for the TCN backbone (conv stack)
+lr_mlp: 3.0e-4     # larger LR for the final MLP head
+dropout_ft: 0.05   # reduced dropout — the per-patient set is tiny
