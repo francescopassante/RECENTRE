@@ -16,7 +16,7 @@ data:
   batch_size: 16384
   split_percentages: [0.7, 0.15, 0.15]
   cross_patients: false   # some patients do more tasks, if false the same patient can appear in train and test but with two diff tasks; if true, patients are disjoint across train and test
-  sequence_length: 32     # input window = sequence_length frames, stride 2 (spans 2x frames)
+  sequence_length: 10     # input window = sequence_length frames, stride 2 (spans 2x frames)
 
 train:
   loss: gaussian_nll

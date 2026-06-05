@@ -15,6 +15,8 @@ def count_shapes(data_paths):
     shapes_count = {task: dict() for task in data_paths.keys()}
     for task, data_path in data_paths.items():
         for filename in os.listdir(data_path):
+            if filename.startswith('.'):
+                continue
             path = Path(data_path) / filename
             data = np.loadtxt(path)
             shapes_count[task][data.shape] = shapes_count[task].get(data.shape, 0) + 1
@@ -46,6 +48,8 @@ def load_data(data_paths):
     for task, data_path in data_paths.items():
         # Loop over files in the dataset directory
         for filename in os.listdir(data_path):
+            if filename.startswith('.'):
+                continue
             initial_runs += 1
             path = Path(data_path) / filename
             # Load only the first 6 columns
