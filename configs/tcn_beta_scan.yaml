@@ -16,7 +16,7 @@ data:
   batch_size: 16384
   split_percentages: [0.7, 0.15, 0.15]
   cross_patients: false
-  sequence_length: 32
+  sequence_length: 10
 
 train:
   loss: gaussian_nll
