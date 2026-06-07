@@ -4,25 +4,6 @@ from pathlib import Path
 import numpy as np
 
 
-def count_shapes(data_paths):
-    """
-    Counts the shapes of the data in the three datasets and returns a dictionary with the count of each shape.
-    Result:
-    RestingState: 99.6% (1080) have shape (1200,12)
-    Memory: 99.9% (1085) have shape (405, 12)
-    Language: 99.8% (1049) have shape (316, 12)
-    """
-    shapes_count = {task: dict() for task in data_paths.keys()}
-    for task, data_path in data_paths.items():
-        for filename in os.listdir(data_path):
-            if filename.startswith('.'):
-                continue
-            path = Path(data_path) / filename
-            data = np.loadtxt(path)
-            shapes_count[task][data.shape] = shapes_count[task].get(data.shape, 0) + 1
-    return shapes_count
-
-
 def load_data(data_paths):
     """
     Loads data from the three datasets, discards the last 6 columns (derivatives),
@@ -35,7 +16,8 @@ def load_data(data_paths):
 
     """
 
-    # shapes holds the results of count_shapes(data_paths) (kept only the >99% shapes)
+    # the per-task frame shapes shared by >99% of the raw runs (after dropping
+    # the 6 derivative columns); runs with any other shape are discarded below
     shapes = {
         "R": (1200, 6),
         "M": (405, 6),
@@ -48,7 +30,7 @@ def load_data(data_paths):
     for task, data_path in data_paths.items():
         # Loop over files in the dataset directory
         for filename in os.listdir(data_path):
-            if filename.startswith('.'):
+            if filename.startswith("."):
                 continue
             initial_runs += 1
             path = Path(data_path) / filename
@@ -65,7 +47,9 @@ def load_data(data_paths):
                 patient_dict[patient_id][task] = data
 
     # Removes patients that miss one or more of the three tasks
-    patients_to_remove = [patient_id for patient_id, tasks in patient_dict.items() if len(tasks) < len(data_paths)]
+    patients_to_remove = [
+        patient_id for patient_id, tasks in patient_dict.items() if len(tasks) < 3
+    ]
     for patient_id in patients_to_remove:
         del patient_dict[patient_id]
 
@@ -76,13 +60,9 @@ def load_data(data_paths):
 
 
 def get_task_dict(patient_dict, task):
-    """Returns a dictionary with {patient_id: data} where data is the time series of the specified task"""
+    """Returns {patient_id: data} where data is the time series of the specified task"""
     assert task in ["R", "M", "L"], f"Valid tasks: R, M or L, got {task}"
-    single_task_dict = {}
-    for id, task_dict in patient_dict.items():
-        single_task_dict[id] = patient_dict[id][task]
-
-    return single_task_dict
+    return {patient_id: tasks[task] for patient_id, tasks in patient_dict.items()}
 
 
 if __name__ == "__main__":

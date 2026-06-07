@@ -41,13 +41,11 @@ def fit(
     Early stopping and model selection use validation FD-gain.
     Returns (best_state, best_epoch, train_loss_history, val_loss_history).
     """
-    mu_t = torch.tensor(mu, dtype=torch.float32, device=device)
-    sigma_t = torch.tensor(sigma, dtype=torch.float32, device=device)
+    mu = torch.tensor(mu, dtype=torch.float32, device=device)
+    sigma = torch.tensor(sigma, dtype=torch.float32, device=device)
     nll = nn.GaussianNLLLoss()
     mse = nn.MSELoss()
 
-    train_loss_history = []
-    val_loss_history = []
     best_val_fdg = float("-inf")
     best_state = None
     best_epoch = 0
@@ -72,11 +70,11 @@ def fit(
 
             # baseline prediction is just the last frame
             last_x = x[:, -1, :]
-            fd_base = fd(last_x, y, mu_t, sigma_t)
-            fd_pred = fd(mean, y, mu_t, sigma_t)
-            gain = fd_gain(fd_base, fd_pred)
+            fd_base = fd(last_x, y, mu, sigma)
+            fd_pred = fd(mean, y, mu, sigma)
+            fdg = fd_gain(fd_base, fd_pred)
 
-            total = base - beta * gain.mean()
+            total = base - beta * fdg.mean()
 
             # add L2SP if finetuning
             if reference is not None and lambda_l2sp > 0:
@@ -113,8 +111,8 @@ def fit(
                 ) * bs
                 val_n += bs
                 last_x = x[:, -1, :]
-                val_fd_bases.append(fd(last_x, y, mu_t, sigma_t))
-                val_fd_preds.append(fd(mean, y, mu_t, sigma_t))
+                val_fd_bases.append(fd(last_x, y, mu, sigma))
+                val_fd_preds.append(fd(mean, y, mu, sigma))
 
             val_base = (val_base_sum / val_n).item()
             val_fdg = (
@@ -123,8 +121,6 @@ def fit(
             val_loss = val_base - beta * val_fdg
 
         scheduler.step(val_loss)
-        train_loss_history.append(train_loss)
-        val_loss_history.append(val_loss)
         pbar.set_postfix(
             {
                 "train_loss": f"{train_loss:.4f}",
@@ -146,4 +142,4 @@ def fit(
             if early_counter >= patience:
                 break
 
-    return best_state, best_epoch, train_loss_history, val_loss_history
+    return best_state, best_epoch

@@ -1,17 +1,18 @@
 import os
 import sys
 
-import matplotlib.pyplot as plt
 import torch
 import yaml
 
 from dataset import split_data
 from engine import fit
 from metrics import evaluate
-from models import build_model
+from models import build_model, get_device
 
-# Usage: python train.py [configs/your_config.yaml]
-config_path = sys.argv[1] if len(sys.argv) > 1 else "configs/gru_generalist.yaml"
+# Usage: python train.py config.yaml
+config_path = sys.argv[1]
+
+print(f"Loading {config_path}...")
 config = yaml.safe_load(open(config_path))
 model_config, data_config, train_config = (
     config["model"],
@@ -19,13 +20,9 @@ model_config, data_config, train_config = (
     config["train"],
 )
 
-device = torch.device(
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available() else "cpu"
-)
-print(f"device: {device}  config: {config_path}")
+device = get_device()
 
+# Split patient in train/val/test
 train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids = (
     split_data(
         train_task=data_config["train_task"],
@@ -33,12 +30,12 @@ train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids =
         split_percentages=tuple(data_config["split_percentages"]),
         batch_size=data_config["batch_size"],
         cross_patients=data_config["cross_patients"],
-        sequence_length=data_config.get("sequence_length", 10),
+        sequence_length=data_config["sequence_length"],
         device=device,
     )
 )
 
-# Build model from config
+# Build specified model using config parameters
 model = build_model(model_config).to(device)
 optimizer = torch.optim.Adam(
     model.parameters(), lr=train_config["lr"], weight_decay=train_config["weight_decay"]
@@ -48,7 +45,7 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 )
 
 # Train model and save the best state
-best_state, best_epoch, train_loss_history, val_loss_history = fit(
+best_state, best_epoch = fit(
     model,
     train_loader,
     val_loader,
@@ -88,15 +85,3 @@ name = f"{model_config['type']}_{data_config['train_task']}v{data_config['test_t
 checkpoint_path = os.path.join(out_dir, f"{name}.pth")
 torch.save(checkpoint, checkpoint_path)
 print(f"saved {checkpoint_path}  (best epoch {best_epoch})")
-
-# train/val loss history plot
-plt.figure(figsize=(10, 5))
-plt.plot(train_loss_history, label="Train Loss")
-plt.plot(val_loss_history, label="Val Loss")
-plt.xlabel("Epoch")
-plt.ylabel("Loss")
-plt.title(f"Train and Val Loss - {name}")
-plt.legend()
-plt.grid()
-plt.savefig(os.path.join(out_dir, f"{name}_loss_history.png"))
-plt.show()

@@ -3,17 +3,19 @@ import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
 
 
+def get_device():
+    device = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps" if torch.backends.mps.is_available() else "cpu"
+    )
+    print(f"device: {device}")
+    return device
+
+
 class GRUModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers=1, dropout=0.1):
-        """
-        Args:
-            input_dim (int): Number of input features (D)
-            hidden_dim (int): Number of hidden units in GRU
-            output_dim (int): Number of output features (D)
-            num_layers (int): Number of GRU layers
-            dropout (float): Dropout rate for regularization
-        """
-        super(GRUModel, self).__init__()
+        super().__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.dp = nn.Dropout(p=dropout)
@@ -23,7 +25,7 @@ class GRUModel(nn.Module):
         )
         self.bn_gru = nn.LayerNorm(hidden_dim)
 
-        ## Fully connected layer to map the hidden state to outputù
+        ## Fully connected layer to map the hidden state to output
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
         self.bn_fc1 = nn.LayerNorm(hidden_dim)
         self.fc_mean = nn.Linear(hidden_dim, output_dim)
@@ -65,6 +67,7 @@ class GRUModel(nn.Module):
 
 
 class CausalConv1d(nn.Module):
+    # Part of the TCN model
     """Dilated causal 1-D convolution — pad on the left, crop the right so the
     output at time t never sees future frames."""
 
@@ -74,8 +77,11 @@ class CausalConv1d(nn.Module):
         self.padding = (kernel_size - 1) * dilation
         self.conv = weight_norm(
             nn.Conv1d(
-                in_channels, out_channels, kernel_size,
-                padding=self.padding, dilation=dilation,
+                in_channels,
+                out_channels,
+                kernel_size,
+                padding=self.padding,
+                dilation=dilation,
             )
         )
 
@@ -95,7 +101,9 @@ class TCNResidualBlock(nn.Module):
         self.norm2 = nn.GroupNorm(1, out_channels)
         self.dropout = nn.Dropout(dropout)
         self.downsample = (
-            nn.Conv1d(in_channels, out_channels, 1) if in_channels != out_channels else None
+            nn.Conv1d(in_channels, out_channels, 1)
+            if in_channels != out_channels
+            else None
         )
         self.act = nn.GELU()
 
@@ -129,13 +137,15 @@ class TCNModel(nn.Module):
         feeds the shared two-head MLP (fc1 → LayerNorm → ReLU → Dropout → fc_mean /
         fc_logvar). The mean head predicts a residual added to the last input frame.
         """
-        super(TCNModel, self).__init__()
+        super().__init__()
         num_channels = list(num_channels)
         layers = []
         for i, out_ch in enumerate(num_channels):
             in_ch = input_dim if i == 0 else num_channels[i - 1]
             layers.append(
-                TCNResidualBlock(in_ch, out_ch, kernel_size, dilation=2 ** i, dropout=dropout)
+                TCNResidualBlock(
+                    in_ch, out_ch, kernel_size, dilation=2**i, dropout=dropout
+                )
             )
         self.tcn = nn.Sequential(*layers)
 

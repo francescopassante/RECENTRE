@@ -9,16 +9,8 @@ def parse_task(task_string):
 
 
 class TimeSeriesDataset(Dataset):
-    """A dataset for time series data."""
 
     def __init__(self, data, ids, sequence_length=10, device="cpu"):
-        """
-        Args:
-            data (numpy array or tensor): Shape [N, T, D]
-            sequence_length (int): Length of sub-sequences
-            device: where to keep self.data. Pass 'cuda' to keep the whole
-                dataset resident on GPU and skip per-batch H2D transfers.
-        """
         if not torch.is_tensor(data):
             data = torch.from_numpy(data)
         self.data = data.to(device=device, dtype=torch.float32)
@@ -225,28 +217,18 @@ def split_data(
         for task in split:
             split[task] = (split[task] - mu) / sigma
 
-    # set True to keep the whole dataset on GPU and use the faster
-    # GPUBatchLoader; set False for the classic CPU-dataset + DataLoader path.
-    use_gpu_loader = True
-
-    dataset_device = device if use_gpu_loader else "cpu"
-
+    # keep the whole dataset on `device` (GPU) so GPUBatchLoader can gather
+    # each batch there without per-batch host->device transfers
     train_datasets = [
-        TimeSeriesDataset(
-            splits["train"][task], train_ids, sequence_length, dataset_device
-        )
+        TimeSeriesDataset(splits["train"][task], train_ids, sequence_length, device)
         for task in splits["train"]
     ]
     val_datasets = [
-        TimeSeriesDataset(
-            splits["val"][task], val_ids, sequence_length, dataset_device
-        )
+        TimeSeriesDataset(splits["val"][task], val_ids, sequence_length, device)
         for task in splits["val"]
     ]
     test_datasets = [
-        TimeSeriesDataset(
-            splits["test"][task], test_ids, sequence_length, dataset_device
-        )
+        TimeSeriesDataset(splits["test"][task], test_ids, sequence_length, device)
         for task in splits["test"]
     ]
 
