@@ -20,26 +20,16 @@ import torch
 from tqdm import tqdm
 
 from dataset import parse_task
-from models import build_model
+from models import build_model, get_device
 
 DIM_NAMES = ["Tx (mm)", "Ty (mm)", "Tz (mm)", "Rx (mm)", "Ry (mm)", "Rz (mm)"]
-CHECKPOINT_PATH = sys.argv[1] if len(sys.argv) > 1 else None
-
-if not CHECKPOINT_PATH or not os.path.isfile(CHECKPOINT_PATH):
-    print("Please provide a valid path to a specific .pth checkpoint file.")
-    print("Usage: python temporal_stability.py checkpoints/.../model.pth")
-    sys.exit(1)
+CHECKPOINT_PATH = sys.argv[1]
 
 tag = os.path.basename(CHECKPOINT_PATH).removesuffix(".pth")
 RESULTS_DIR = f"results/temporal_stability/{tag}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-device = torch.device(
-    "cuda" if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available()
-    else "cpu"
-)
-print(f"device: {device}")
+device = get_device()
 
 # 1. Load checkpoint and model
 ckpt = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=False)

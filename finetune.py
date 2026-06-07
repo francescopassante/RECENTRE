@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from dataset import TimeSeriesDataset
 from engine import fit
 from metrics import evaluate
-from models import build_model
+from models import build_model, get_device
 
 # Dimension order is fixed: [Tx, Ty, Tz, Rx, Ry, Rz] (rotations are 3:6).
 DIMS = ["Tx", "Ty", "Tz", "Rx", "Ry", "Rz"]
@@ -46,7 +46,7 @@ def build_patient_split(
 ):
     """Chronological train/val/test split of one patient's normalized series.
 
-    Splits raw frames into three disjoint arrays *before* windowing, so no
+    Splits raw frames into three disjoint arrays before windowing, so no
     window straddles a boundary — no leakage across splits.
     """
     total_len = series_norm.shape[0]
@@ -198,12 +198,8 @@ if __name__ == "__main__":
     cfg = yaml.safe_load(open(config_path))
     cfg["split_percentages"] = tuple(cfg["split_percentages"])
 
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
-    )
-    print(f"device: {device}  config: {config_path}")
+    device = get_device()
+    print(f"config: {config_path}")
 
     pretrained = torch.load(cfg["pretrained"], map_location=device, weights_only=False)
     task_dicts = load_task_dicts()
