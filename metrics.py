@@ -22,7 +22,7 @@ def fd_gain(fd_baseline, fd_pred):
     return gain
 
 
-def evaluate(model, loader, mu, sigma, device, sigma_threshold=None):
+def evaluate(model, loader, mu, sigma, device, sigma_threshold=None, noise=None):
     """Run the model over a loader and return per-sample arrays + the mean NLL.
 
     Returns a dict of numpy arrays, all with batch dimension N:
@@ -51,6 +51,8 @@ def evaluate(model, loader, mu, sigma, device, sigma_threshold=None):
     with torch.no_grad():
         for p, x, y in loader:
             x, y = x.to(device), y.to(device)
+            if noise is not None:
+                x = x + noise * torch.randn_like(x)
             # model returns (mean, variance) — variance already exp'd inside the model
             mean, var = model(x)
             last_x = x[:, -1, :]

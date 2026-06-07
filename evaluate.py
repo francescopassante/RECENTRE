@@ -26,6 +26,8 @@ test_ids = ckpt["test_ids"]
 test_task = config["data"]["test_task"]
 test_tasks = parse_task(test_task)
 
+
+
 # the model is rebuilt straight from the config stored in the checkpoint
 model = build_model(config["model"]).to(device)
 model.load_state_dict(ckpt["model_state"])
@@ -61,8 +63,8 @@ for task in test_tasks:
     ds = TimeSeriesDataset(data, test_ids, sequence_length=seq_len, device=device)
     loader = GPUBatchLoader(ds, batch_size=1024, shuffle=False)
     out_by_task[task] = evaluate(
-        model, loader, mu, sigma, device, sigma_threshold=sigma_threshold
-    )
+        model, loader, mu, sigma, device, sigma_threshold=sigma_threshold)
+    
 
 # Frame-level arrays (rotations ×50 -> mm) and matching per-sample task labels.
 pred_list, true_list, base_list, labels = [], [], [], []
