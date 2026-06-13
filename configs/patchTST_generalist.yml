@@ -1,0 +1,28 @@
+output_dir: checkpoints/generalist
+
+model:
+  type: patchTST          # key in MODELS (models.py); add new architectures there
+  input_dim: 6
+  sequence_length: 10
+  patch_size: 2
+  d: 64
+  num_heads: 8
+  fc_hidden: 128
+  transformer_layers: 3
+  dropout: 0.1
+
+data:
+  train_task: R+M+L
+  test_task: R+M+L   # overlapping tasks -> split_data auto-uses disjoint patients
+  batch_size: 16384
+  split_percentages: [0.7, 0.15, 0.15]
+  cross_patients: false   # some patients do more tasks, if false the same patient can appear in train and test but with two diff tasks; if true, patients are disjoint across train and test
+  sequence_length: 10     # input window = sequence_length frames, stride 2 (spans 2x frames)
+
+train:
+  loss: gaussian_nll
+  beta: 0.5
+  epochs: 150
+  patience: 100
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
