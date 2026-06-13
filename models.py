@@ -290,6 +290,10 @@ class PatchTST(nn.Module):
         y_mean = self.fc_mean(out).view(B, D)  # [B, D]
         y_logvar = self.fc_logvar(out).view(B, D)  # [B, D]
 
+        # clamp logvar before exp so the variance stays in a sane range; without
+        # this the GaussianNLL variance term can blow up and the loss goes NaN
+        y_logvar = y_logvar.clamp(-10.0, 10.0)
+
         return (x[:, -1, :] + y_mean), y_logvar.exp()
 
 
