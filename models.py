@@ -356,6 +356,9 @@ class TSMixer(nn.Module):
         self.time_projection_mean = nn.Linear(sequence_length, 1)
         self.time_projection_logvar = nn.Linear(sequence_length, 1)
 
+        nn.init.zeros_(self.time_projection_mean.weight)
+        nn.init.zeros_(self.time_projection_mean.bias)
+
     def forward(self, x):
         # x shape [B, T, D]
         last_frame = x[:, -1, :]  # [B, D]
