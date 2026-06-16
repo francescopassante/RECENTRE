@@ -374,11 +374,13 @@ class TSMixer(nn.Module):
 
 
 # Add a new architecture by writing its class above and giving it a name here.
-MODELS = {"gru": GRUModel, "tcn": TCNModel, "patchTST": PatchTST, "tsmixer": TSMixer}
+MODELS = {"gru": GRUModel, "tcn": TCNModel, "patchtst": PatchTST, "tsmixer": TSMixer}
 
 
 def build_model(model_config):
     """Build a model from a yaml config dict like {"type": "gru", "hidden_dim": 128, ...}."""
     config = dict(model_config)
-    kind = config.pop("type")  # pop returns the value and removes it from the dict
+    kind = config.pop(
+        "type"
+    ).lower()  # pop returns the value and removes it from the dict
     return MODELS[kind](**config)
