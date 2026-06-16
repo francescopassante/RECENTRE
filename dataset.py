@@ -10,13 +10,23 @@ def parse_task(task_string):
 
 class TimeSeriesDataset(Dataset):
 
-    def __init__(self, data, ids, sequence_length=10, device="cpu"):
+    def __init__(self, data, ids, sequence_length=10, device="cpu", time_augmentation=False, neg_augmentation=False):
         if not torch.is_tensor(data):
             data = torch.from_numpy(data)
         self.data = data.to(device=device, dtype=torch.float32)
+        if time_augmentation == True:
+            data_rev = data.flip(1)
+            self.data = torch.cat([data, data_rev], dim=0)
+            self.ids = np.concatenate([ids, ids])
+        else:
+            self.ids = ids
+        if neg_augmentation == True:
+            data_neg = -data
+            self.data = torch.cat([data, data_neg], dim=0)
+            self.ids = np.concatenate([self.ids, self.ids])
         self.time_span = sequence_length * 2
         self.N, self.T, self.D = self.data.shape
-        self.ids = ids
+
 
     def __len__(self):
         return self.N * (self.T - self.time_span + 1)
@@ -117,6 +127,8 @@ def split_data(
     cross_patients=False,
     sequence_length=10,
     device="cpu",
+    time_augmentation=False,
+    neg_augmentation=False,
 ):
     """
     given train_task and test_task strings like "R+M" or "L", load the corresponding datasets,
@@ -220,15 +232,15 @@ def split_data(
     # keep the whole dataset on `device` (GPU) so GPUBatchLoader can gather
     # each batch there without per-batch host->device transfers
     train_datasets = [
-        TimeSeriesDataset(splits["train"][task], train_ids, sequence_length, device)
+        TimeSeriesDataset(splits["train"][task], train_ids, sequence_length, device, time_augmentation=time_augmentation, neg_augmentation=neg_augmentation)
         for task in splits["train"]
     ]
     val_datasets = [
-        TimeSeriesDataset(splits["val"][task], val_ids, sequence_length, device)
+        TimeSeriesDataset(splits["val"][task], val_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False)
         for task in splits["val"]
     ]
     test_datasets = [
-        TimeSeriesDataset(splits["test"][task], test_ids, sequence_length, device)
+        TimeSeriesDataset(splits["test"][task], test_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False)
         for task in splits["test"]
     ]
 

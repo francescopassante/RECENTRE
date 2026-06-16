@@ -1,14 +1,17 @@
-# Generalist TCN: trained on all three tasks, tested on all three.
+# Generalist transformer: trained on all three tasks, tested on all three.
 # Same pipeline as the GRU generalist — only the model block differs.
 output_dir: checkpoints/generalist
 
 model:
-  type: tcn          # key in MODELS (models.py); add new architectures there
+  type: transformer          # key in MODELS (models.py); add new architectures there
   input_dim: 6
   output_dim: 6     #two last heads: one for mus one for sigmas 
-  num_channels: [64, 128, 128, 64]   # 4 residual blocks; dilation 1,2,4,8
-  kernel_size: 2
+  d_model: 128
+  nhead: 4 
+  num_layers: 2
+  dim_feedforward: 256
   dropout: 0.2
+  max_len: 512
 
 data:
   train_task: R+M+L
@@ -19,7 +22,6 @@ data:
   sequence_length: 10     # input window = sequence_length frames, stride 2 (spans 2x frames)
   time_augmentation: false
   neg_augmentation: false
-
 
 
 train:
