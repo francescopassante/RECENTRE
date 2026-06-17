@@ -90,5 +90,10 @@ out_dir = config.get("output_dir", "checkpoints")
 os.makedirs(out_dir, exist_ok=True)
 name = f"{model_config['type']}_{data_config['train_task']}v{data_config['test_task']}_beta{train_config['beta']}_ep{train_config['epochs']}"
 checkpoint_path = os.path.join(out_dir, f"{name}.pth")
+# don't overwrite an existing checkpoint: bump _2, _3, ... until the path is free
+i = 2
+while os.path.exists(checkpoint_path):
+    checkpoint_path = os.path.join(out_dir, f"{name}_{i}.pth")
+    i += 1
 torch.save(checkpoint, checkpoint_path)
 print(f"saved {checkpoint_path}  (best epoch {best_epoch})")
