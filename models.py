@@ -297,16 +297,93 @@ class PatchTST(nn.Module):
         return (x[:, -1, :] + y_mean), y_logvar.exp()
 
 
+class TSMixerLayer(nn.Module):
+    def __init__(self, sequence_length, input_dim, hidden_dim, dropout):
+        super().__init__()
+        self.time_mlp = nn.Sequential(
+            nn.Linear(sequence_length, sequence_length),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        self.channel_mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, input_dim),
+            nn.Dropout(dropout),
+        )
+        self.norm1 = nn.BatchNorm2d(1)
+        self.norm2 = nn.BatchNorm2d(1)
+
+    def forward(self, x):
+        # x shape [B, T, D]
+        # 1) normalization
+        x = x.unsqueeze(1)  # [B, 1, T, D]
+
+        # 2) time mixing
+        out = self.norm1(x)
+        out = out.transpose(2, 3)  # [B, 1, D, T]
+        out = self.time_mlp(out)  # [B, 1, D, T]
+
+        out = out.transpose(2, 3)  # [B, 1, T, D]
+        x = x + out  # residual connection
+
+        # 3) channel mixing
+        out = self.norm2(x)
+        out = self.channel_mlp(out)
+
+        x = x + out  # residual connection
+
+        return x.squeeze(1)  # [B, T, D]
+
+
+class TSMixer(nn.Module):
+    def __init__(self, num_layers, sequence_length, input_dim, hidden_dim, dropout):
+        super().__init__()
+        self.num_layers = num_layers
+        self.sequence_length = sequence_length
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.dropout = dropout
+
+        self.mixer_layers = nn.ModuleList(
+            [
+                TSMixerLayer(sequence_length, input_dim, hidden_dim, dropout)
+                for _ in range(num_layers)
+            ]
+        )
+
+        self.time_projection_mean = nn.Linear(sequence_length, 1)
+        self.time_projection_logvar = nn.Linear(sequence_length, 1)
+
+        nn.init.zeros_(self.time_projection_mean.weight)
+        nn.init.zeros_(self.time_projection_mean.bias)
+
+    def forward(self, x):
+        # x shape [B, T, D]
+        last_frame = x[:, -1, :]  # [B, D]
+        # time and channel mixing layers
+        for layer in self.mixer_layers:
+            x = layer(x)
+
+        # temporal projection to horizon frames (1 in our case)
+        x = x.transpose(1, 2)  # [B, D, T]
+        y_mean = self.time_projection_mean(x).squeeze(-1)  # [B, D]
+        y_logvar = self.time_projection_logvar(x).squeeze(-1)  # [B, D]
+
+        y_logvar = y_logvar.clamp(-10.0, 10.0)
+
+        return last_frame + y_mean, y_logvar.exp()
+
+
 # Add a new architecture by writing its class above and giving it a name here.
-MODELS = {
-    "gru": GRUModel,
-    "tcn": TCNModel,
-    "patchTST": PatchTST,
-}
+MODELS = {"gru": GRUModel, "tcn": TCNModel, "patchtst": PatchTST, "tsmixer": TSMixer}
 
 
 def build_model(model_config):
     """Build a model from a yaml config dict like {"type": "gru", "hidden_dim": 128, ...}."""
     config = dict(model_config)
-    kind = config.pop("type")  # pop returns the value and removes it from the dict
+    kind = config.pop(
+        "type"
+    ).lower()  # pop returns the value and removes it from the dict
     return MODELS[kind](**config)

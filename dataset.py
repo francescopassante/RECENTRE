@@ -117,6 +117,7 @@ def split_data(
     cross_patients=False,
     sequence_length=10,
     device="cpu",
+    ids=None,
 ):
     """
     given train_task and test_task strings like "R+M" or "L", load the corresponding datasets,
@@ -124,6 +125,8 @@ def split_data(
     If cross_patients is True, ensure that train/val/test sets contain disjoint patients;
     if False, allow them to overlap (but still split val/test). If there's an overlap in train_task and test_task,
     automatically set cross_patients to True to avoid data leakage.
+    Pass ids=(train_ids, val_ids, test_ids) to reuse an exact saved split (e.g. when
+    resuming a checkpoint) instead of re-deriving it from the rng seed.
     """
 
     train_tasks = parse_task(train_task)
@@ -151,7 +154,10 @@ def split_data(
     patient_ids = np.array(sorted(task_dicts["R"].keys()))
     rng = np.random.default_rng(42)
 
-    if cross_patients:
+    if ids is not None:
+        # reuse an exact saved split, bypassing the rng-based partitioning
+        train_ids, val_ids, test_ids = ids
+    elif cross_patients:
         # We must have patients set A for training, patients set B for validation and patients set C for testing
         assert sum(split_percentages) == 1.0, "Split percentages must sum to 1.0"
 
