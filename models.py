@@ -342,10 +342,206 @@ MODELS = {
     "tcn": TCNModel,
     "transformer": TransformerModel,
 }
+class PatchTSTEncoderLayer(nn.Module):
+
+    def __init__(self, d, num_heads, fc_hidden, dropout=0.1):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(
+            embed_dim=d, num_heads=num_heads, batch_first=True, dropout=dropout
+        )
+        self.norm1 = nn.BatchNorm1d(d)
+        self.feed_forward = nn.Sequential(
+            nn.Linear(d, fc_hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(fc_hidden, d),
+        )
+        self.norm2 = nn.BatchNorm1d(d)
+
+    def norm(self, norm, x):
+        # BatchNorm1d normalizes the channel axis (dim 1); bring d there and back.
+        # x: [B*D, num_patches, d] -> [B*D, d, num_patches] -> [B*D, num_patches, d]
+        return norm(x.transpose(1, 2)).transpose(1, 2)
+
+    def forward(self, x):
+        # x shape [B*D, num_patches, d]
+        v, _ = self.attention(x, x, x)
+        x = self.norm(self.norm1, x + v)  # residual connection + batch norm
+        ff = self.feed_forward(x)  # [B*D, num_patches, d]
+        x = self.norm(self.norm2, x + ff)  # residual connection + batch norm
+        return x
+
+
+class PatchTST(nn.Module):
+
+    def __init__(
+        self,
+        sequence_length,
+        input_dim,
+        patch_size,
+        d,
+        num_heads,
+        fc_hidden,
+        transformer_layers,
+        dropout=0.1,
+    ):
+        super().__init__()
+        # parameters
+        self.sequence_length = sequence_length
+        self.patch_size = patch_size
+        assert (
+            sequence_length % self.patch_size == 0
+        ), f"Sequence length must be divisible by patch size. Recieved sequence_length={self.sequence_length}, patch_size={self.patch_size}"
+        self.num_patches = sequence_length // patch_size
+        self.input_dim = input_dim
+        self.d = d
+        self.num_heads = num_heads
+        self.fc_hidden = fc_hidden
+        self.transformer_layers = transformer_layers
+
+        # layers
+        self.pos_embedding = nn.Parameter(torch.randn(1, self.num_patches, d))
+        self.patch_proj = nn.Linear(patch_size, d)
+        # one independent block per layer (no weight tying across layers)
+        self.layers = nn.ModuleList(
+            [
+                PatchTSTEncoderLayer(d, num_heads, fc_hidden, dropout)
+                for _ in range(transformer_layers)
+            ]
+        )
+
+        # per-channel heads: flatten the patches of one channel -> scalar mean/logvar.
+        # names kept identical to the other models so fine-tuning can freeze fc_logvar.
+        self.fc_mean = nn.Linear(self.num_patches * d, 1)
+        self.fc_logvar = nn.Linear(self.num_patches * d, 1)
+
+    def to_patches(self, x):
+        # x shape [B * D, T]
+        # reshape to [B*D, num_patches, patch_size]
+        patches = x.view(-1, self.num_patches, self.patch_size)
+        return patches
+
+    def patch_embedding(self, patches):
+        # patches shape [B * D, num_patches, patch_size]
+        # embed with linear projection and add learnable positional encoding
+        emb_patches = self.patch_proj(patches) + self.pos_embedding
+
+        # output shape [B * D, num_patches, d]
+        return emb_patches
+
+    def forward(self, x):
+        # x shape [B, T, D]
+        B, T, D = x.shape
+        # transpose to [B, D, T] and flatten batch and dims
+        x_fl = x.permute(0, 2, 1).reshape(B * D, T)  # [B*D, T]
+
+        patches = self.to_patches(x_fl)  # [B*D, num_patches, patch_size]
+        # embed to latent dimension d and add positional encoding
+        out = self.patch_embedding(patches)  # [B*D, num_patches, d]
+
+        for layer in self.layers:
+            out = layer(out)  # [B*D, num_patches, d]
+
+        # flatten patches and project to a per-channel prediction
+        out = out.flatten(1, 2)  # [B*D, num_patches * d]
+        # two fc heads for mean and logvar
+        y_mean = self.fc_mean(out).view(B, D)  # [B, D]
+        y_logvar = self.fc_logvar(out).view(B, D)  # [B, D]
+
+        # clamp logvar before exp so the variance stays in a sane range; without
+        # this the GaussianNLL variance term can blow up and the loss goes NaN
+        y_logvar = y_logvar.clamp(-10.0, 10.0)
+
+        return (x[:, -1, :] + y_mean), y_logvar.exp()
+
+
+class TSMixerLayer(nn.Module):
+    def __init__(self, sequence_length, input_dim, hidden_dim, dropout):
+        super().__init__()
+        self.time_mlp = nn.Sequential(
+            nn.Linear(sequence_length, sequence_length),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        self.channel_mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, input_dim),
+            nn.Dropout(dropout),
+        )
+        self.norm1 = nn.BatchNorm2d(1)
+        self.norm2 = nn.BatchNorm2d(1)
+
+    def forward(self, x):
+        # x shape [B, T, D]
+        # 1) normalization
+        x = x.unsqueeze(1)  # [B, 1, T, D]
+
+        # 2) time mixing
+        out = self.norm1(x)
+        out = out.transpose(2, 3)  # [B, 1, D, T]
+        out = self.time_mlp(out)  # [B, 1, D, T]
+
+        out = out.transpose(2, 3)  # [B, 1, T, D]
+        x = x + out  # residual connection
+
+        # 3) channel mixing
+        out = self.norm2(x)
+        out = self.channel_mlp(out)
+
+        x = x + out  # residual connection
+
+        return x.squeeze(1)  # [B, T, D]
+
+
+class TSMixer(nn.Module):
+    def __init__(self, num_layers, sequence_length, input_dim, hidden_dim, dropout):
+        super().__init__()
+        self.num_layers = num_layers
+        self.sequence_length = sequence_length
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.dropout = dropout
+
+        self.mixer_layers = nn.ModuleList(
+            [
+                TSMixerLayer(sequence_length, input_dim, hidden_dim, dropout)
+                for _ in range(num_layers)
+            ]
+        )
+
+        self.time_projection_mean = nn.Linear(sequence_length, 1)
+        self.time_projection_logvar = nn.Linear(sequence_length, 1)
+
+        nn.init.zeros_(self.time_projection_mean.weight)
+        nn.init.zeros_(self.time_projection_mean.bias)
+
+    def forward(self, x):
+        # x shape [B, T, D]
+        last_frame = x[:, -1, :]  # [B, D]
+        # time and channel mixing layers
+        for layer in self.mixer_layers:
+            x = layer(x)
+
+        # temporal projection to horizon frames (1 in our case)
+        x = x.transpose(1, 2)  # [B, D, T]
+        y_mean = self.time_projection_mean(x).squeeze(-1)  # [B, D]
+        y_logvar = self.time_projection_logvar(x).squeeze(-1)  # [B, D]
+
+        y_logvar = y_logvar.clamp(-10.0, 10.0)
+
+        return last_frame + y_mean, y_logvar.exp()
+
+
+# Add a new architecture by writing its class above and giving it a name here.
+MODELS = {"gru": GRUModel, "tcn": TCNModel, "patchtst": PatchTST, "tsmixer": TSMixer}
 
 
 def build_model(model_config):
     """Build a model from a yaml config dict like {"type": "gru", "hidden_dim": 128, ...}."""
     config = dict(model_config)
-    kind = config.pop("type")  # pop returns the value and removes it from the dict
+    kind = config.pop(
+        "type"
+    ).lower()  # pop returns the value and removes it from the dict
     return MODELS[kind](**config)

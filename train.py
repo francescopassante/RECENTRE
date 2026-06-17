@@ -39,6 +39,8 @@ train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids =
 
 # Build specified model using config parameters
 model = build_model(model_config).to(device)
+n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"model: {model_config['type']}  |  trainable params: {n_params:,}")
 optimizer = torch.optim.Adam(
     model.parameters(), lr=train_config["lr"], weight_decay=train_config["weight_decay"]
 )
@@ -79,6 +81,9 @@ checkpoint = {
     "test_ids": test_ids,
     "best_epoch": best_epoch,
     "pred_sigma": pred_sigma,
+    # optimizer/scheduler state so resume.py can warm-restart at the right LR
+    "optimizer_state": optimizer.state_dict(),
+    "scheduler_state": scheduler.state_dict(),
 }
 
 out_dir = config.get("output_dir", "checkpoints")
