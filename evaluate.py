@@ -85,7 +85,7 @@ Data analysis and plotting
 
 # these arrays: 1) scale rotations by 50mm 2) concatenate all tasks 3) keep track of task labels
 pred_list, true_list, base_list, labels = [], [], [], []
-fd_pred_list, fd_base_list, z_list = [], [], []
+fd_pred_list, fd_base_list, z_list, std_list = [], [], [], []
 for task in test_tasks:
     out = out_by_task[task]
     p, tr, b = out["pred"].copy(), out["true"].copy(), out["base"].copy()
@@ -98,6 +98,9 @@ for task in test_tasks:
     fd_pred_list.append(out["fd_pred"])
     fd_base_list.append(out["fd_base"])
     z_list.append(out["z"])
+    # std stays per-dim in physical units (no ×50 here); fd_vs_sigma applies the
+    # ×50 rotation weighting itself when collapsing to an FD-scale σ.
+    std_list.append(out["std"])
     labels.append(np.full(len(p), task))
 
 pred = np.concatenate(pred_list)
@@ -106,6 +109,7 @@ base = np.concatenate(base_list)
 fd_pred = np.concatenate(fd_pred_list)
 fd_base = np.concatenate(fd_base_list)
 z = np.concatenate(z_list)
+std = np.concatenate(std_list)
 task_labels = np.concatenate(labels)  # one label per sample/frame (they align)
 
 # aggregate per patient FD_pred, FD_base and FD_gain for each task
@@ -183,6 +187,11 @@ save(
 save(
     plots.fdgain_vs_motion(fd_pred, fd_base, task_labels, test_tasks),
     "08_fdgain_vs_motion",
+)
+
+save(
+    plots.fd_vs_sigma(std, fd_pred, fd_base, task_labels, test_tasks),
+    "10_fd_vs_sigma",
 )
 
 # Model profile: parameter count, size, FLOPs and inference timing.

@@ -399,6 +399,74 @@ def fdgain_vs_motion(fd_pred, fd_base, sample_task_labels, test_tasks):
     return fig
 
 
+# 10) Predicted-σ vs FD — does high σ flag frames where the baseline beats the model?
+# The right panel is the decision view for a "high σ → fall back to baseline" rule:
+# wherever the model line rises above the baseline line, those frames are ones the
+# fallback would improve.
+def fd_vs_sigma(std, fd_pred, fd_base, sample_task_labels, test_tasks):
+    # σ per frame on the same mm scale as FD: sum translation σ + 50·sum rotation σ,
+    # mirroring how fd() combines the six dims, so "high σ" is directly comparable
+    # to a framewise displacement.
+    sigma_fd = std[:, :3].sum(axis=1) + 50 * std[:, 3:].sum(axis=1)
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+
+    # left: 2D density of model FD vs σ. A raw scatter of every frame (×3 tasks,
+    # plus baseline) is an unreadable hairball, so we hexbin the joint distribution
+    # instead — log counts show where the mass sits and how FD spreads at each σ.
+    ax = axes[0]
+    x_hi = np.percentile(sigma_fd, 99.5)
+    y_hi = np.percentile(fd_pred, 99)
+    keep = (sigma_fd <= x_hi) & (fd_pred <= y_hi)
+    hb = ax.hexbin(
+        sigma_fd[keep], fd_pred[keep], gridsize=45, bins="log", cmap="viridis", mincnt=1
+    )
+    fig.colorbar(hb, ax=ax, label="frame count (log)")
+    ax.set_xlabel("Predicted σ (FD-weighted, mm)")
+    ax.set_ylabel("Model framewise displacement (mm)")
+    ax.set_title("Model FD vs predicted σ — density")
+
+    # right: σ-quantile bins (pooled across tasks). Compare mean model FD vs mean
+    # baseline FD per bin: where the model line rises above the baseline line, a
+    # high-σ → baseline fallback would improve those frames. Quantile bins give
+    # roughly equal counts despite the heavy σ tail.
+    n_bins = 12
+    edges = np.unique(np.quantile(sigma_fd, np.linspace(0, 1, n_bins + 1)))
+    idx = np.clip(np.digitize(sigma_fd, edges[1:-1]), 0, len(edges) - 2)
+    centers, mean_pred, mean_base = [], [], []
+    for k in range(len(edges) - 1):
+        sel = idx == k
+        if not sel.any():
+            continue
+        centers.append(sigma_fd[sel].mean())
+        mean_pred.append(fd_pred[sel].mean())
+        mean_base.append(fd_base[sel].mean())
+    centers = np.array(centers)
+    mean_pred = np.array(mean_pred)
+    mean_base = np.array(mean_base)
+
+    ax = axes[1]
+    ax.plot(centers, mean_base, "o-", color="gray", label="Baseline FD")
+    ax.plot(centers, mean_pred, "o-", color="tab:red", label="Model FD")
+    # shade the σ range where the baseline beats the model (fallback would help)
+    ax.fill_between(
+        centers, mean_base, mean_pred, where=mean_pred > mean_base,
+        color="red", alpha=0.15, label="model worse than baseline",
+    )
+    y_top = ax.get_ylim()[1]
+    for pct in (90, 95):
+        xp = np.percentile(sigma_fd, pct)
+        ax.axvline(xp, color="black", linestyle=":", linewidth=1)
+        ax.text(xp, y_top, f"p{pct}", fontsize=8, va="top", ha="right")
+    ax.set_xlabel("Predicted σ (FD-weighted, mm)")
+    ax.set_ylabel("Mean FD per σ bin (mm)")
+    ax.set_title("Mean FD vs σ — model vs baseline")
+    ax.legend(fontsize=8)
+
+    fig.tight_layout()
+    return fig
+
+
 # 9) Model profile — size / parameters / FLOPs / inference time, as a plain table.
 # rows is a list of [metric, value] pairs already formatted as strings in evaluate.py.
 def model_profile(rows, tag):
