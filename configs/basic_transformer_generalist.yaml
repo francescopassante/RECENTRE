@@ -12,6 +12,7 @@ model:
   dim_feedforward: 256
   dropout: 0.2
   max_len: 512
+  causal: true              # true: attend only to past (matches GRU/TCN); false: full bidirectional encoder
 
 data:
   train_task: R+M+L
