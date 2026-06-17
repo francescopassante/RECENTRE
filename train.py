@@ -79,6 +79,9 @@ checkpoint = {
     "test_ids": test_ids,
     "best_epoch": best_epoch,
     "pred_sigma": pred_sigma,
+    # optimizer/scheduler state so resume.py can warm-restart at the right LR
+    "optimizer_state": optimizer.state_dict(),
+    "scheduler_state": scheduler.state_dict(),
 }
 
 out_dir = config.get("output_dir", "checkpoints")
