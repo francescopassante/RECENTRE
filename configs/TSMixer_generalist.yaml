@@ -4,9 +4,9 @@ output_dir: checkpoints/generalist
 model:
   type: TSMixer          # key in MODELS (models.py); add new architectures there
   input_dim: 6
-  hidden_dim: 16
-  num_layers: 2
-  sequence_length: 10
+  hidden_dim: 8
+  num_layers: 4
+  sequence_length: 20
   dropout: 0.5
 
 
@@ -16,7 +16,7 @@ data:
   batch_size: 16384
   split_percentages: [0.7, 0.15, 0.15]
   cross_patients: false
-  sequence_length: 10   # input window = sequence_length frames, stride 2 (spans 2x frames)
+  sequence_length: 20   # input window = sequence_length frames, stride 2 (spans 2x frames)
 
 train:
   loss: gaussian_nll
