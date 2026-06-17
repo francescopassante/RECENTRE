@@ -199,14 +199,26 @@ with torch.no_grad(), FlopCounterMode(display=False) as fc:
 flops_per_sample = fc.get_total_flops()
 
 
+def sync():
+    # GPU kernels run asynchronously: model(x) only enqueues work and returns
+    # before the GPU finishes. Block until the queue drains so perf_counter
+    # brackets real compute, not just the CPU-side launch loop.
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+
 def time_batch(batch_size, warmup=3, runs=20):
     xb = torch.randn(batch_size, seq_len, config["model"]["input_dim"], device=device)
     with torch.no_grad():
         for _ in range(warmup):
             model(xb)
+        sync()  # ensure warmup work is done before starting the clock
         t = time.perf_counter()
         for _ in range(runs):
             model(xb)
+        sync()  # wait for all runs to finish before stopping the clock
         return (time.perf_counter() - t) / runs
 
 
