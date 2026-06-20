@@ -5,7 +5,8 @@ output_dir: checkpoints/generalist
 model:
   type: dlinear
   sequence_length: 10
-  num_channels: 6
+  input_dim: 6
+  output_dim: 6
   kernel_size: 3      # moving-average window for trend extraction (must be odd)
 
 data:

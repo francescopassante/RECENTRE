@@ -479,12 +479,12 @@ class TSMixer(nn.Module):
 
 
 class DLinear(nn.Module):
-    def __init__(self, sequence_length, num_channels, kernel_size):
+    def __init__(self, sequence_length, input_dim, output_dim, kernel_size):
         super().__init__()
         assert kernel_size % 2 == 1
-        
+
         self.L = sequence_length
-        self.C = num_channels
+        self.C = input_dim
         self.pad = kernel_size // 2
         self.kernel_size = kernel_size
 
@@ -498,12 +498,12 @@ class DLinear(nn.Module):
 
         x_t = x.permute(0, 2, 1)
         
-        front = x_t[:, :, 0:1].repeat(1, 1, self.pad)
-        end = x_t[:, :, -1:].repeat(1, 1, self.pad)
+        front = x_t[:, :, 0:1].repeat(1, 1, self.pad) #copy the first element
+        end = x_t[:, :, -1:].repeat(1, 1, self.pad) #copy the last element
         x_padded = torch.cat([front, x_t, end], dim=-1)
         
-        trend = F.avg_pool1d(x_padded, kernel_size=self.kernel_size, stride=1)
-        season = x_t - trend
+        trend = F.avg_pool1d(x_padded, kernel_size=self.kernel_size, stride=1) # for each three elements takes the mean, with stride=1 the output has the same lenght and is the global (trend) movement
+        season = x_t - trend # oscillations wrt trend, small scale 
 
         pred_trend = torch.zeros([B, self.C], device=x.device)
         pred_season = torch.zeros([B, self.C], device=x.device)
@@ -529,10 +529,10 @@ class NLinear(nn.Module):
     Subtracts the last frame before the linear map, one Linear(L→1) per channel.
     """
 
-    def __init__(self, sequence_length, num_channels):
+    def __init__(self, sequence_length, input_dim, output_dim):
         super().__init__()
         self.L = sequence_length
-        self.C = num_channels
+        self.C = input_dim
         self.linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
         self.logvar_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
 
