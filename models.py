@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.utils.parametrizations import weight_norm
 import math
 
@@ -475,6 +476,84 @@ class TSMixer(nn.Module):
         return last_frame + y_mean, y_logvar.exp()
 
 
+
+
+class DLinear(nn.Module):
+    def __init__(self, sequence_length, num_channels, kernel_size):
+        super().__init__()
+        assert kernel_size % 2 == 1
+        
+        self.L = sequence_length
+        self.C = num_channels
+        self.pad = kernel_size // 2
+        self.kernel_size = kernel_size
+
+        self.trend_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+        self.season_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+        self.logvar_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+
+    def forward(self, x):
+        B, L, C = x.shape
+        assert L == self.L and C == self.C
+
+        x_t = x.permute(0, 2, 1)
+        
+        front = x_t[:, :, 0:1].repeat(1, 1, self.pad)
+        end = x_t[:, :, -1:].repeat(1, 1, self.pad)
+        x_padded = torch.cat([front, x_t, end], dim=-1)
+        
+        trend = F.avg_pool1d(x_padded, kernel_size=self.kernel_size, stride=1)
+        season = x_t - trend
+
+        pred_trend = torch.zeros([B, self.C], device=x.device)
+        pred_season = torch.zeros([B, self.C], device=x.device)
+        pred_logvar = torch.zeros([B, self.C], device=x.device)
+
+        for c in range(self.C):
+            pred_trend[:, c] = self.trend_linears[c](trend[:, c, :]).squeeze(-1)
+            pred_season[:, c] = self.season_linears[c](season[:, c, :]).squeeze(-1)
+            pred_logvar[:, c] = self.logvar_linears[c](x_t[:, c, :]).squeeze(-1)
+
+        mean_res = pred_trend + pred_season
+        logvar = torch.clamp(pred_logvar, min=-10.0, max=10.0)
+
+        return x[:, -1, :] + mean_res, logvar.exp()
+
+
+
+
+
+class NLinear(nn.Module):
+    """Normalized-Linear (Zeng et al. 2022), channel-independent.
+
+    Subtracts the last frame before the linear map, one Linear(L→1) per channel.
+    """
+
+    def __init__(self, sequence_length, num_channels):
+        super().__init__()
+        self.L = sequence_length
+        self.C = num_channels
+        self.linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+        self.logvar_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+
+    def forward(self, x):
+        B, L, C = x.shape
+        assert L == self.L and C == self.C
+
+        x_t = x.permute(0, 2, 1)       # [B, C, L]
+        x_norm = x_t - x_t[:, :, -1:]  # subtract last frame per channel
+
+        pred_mean = torch.zeros([B, self.C], device=x.device)
+        pred_logvar = torch.zeros([B, self.C], device=x.device)
+
+        for c in range(self.C):
+            pred_mean[:, c] = self.linears[c](x_norm[:, c, :]).squeeze(-1)
+            pred_logvar[:, c] = self.logvar_linears[c](x_t[:, c, :]).squeeze(-1)
+
+        logvar = torch.clamp(pred_logvar, min=-10.0, max=10.0)
+        return x[:, -1, :] + pred_mean, logvar.exp()
+
+
 # Add a new architecture by writing its class above and giving it a name here.
 MODELS = {
     "gru": GRUModel,
@@ -482,6 +561,8 @@ MODELS = {
     "transformer": TransformerModel,
     "patchtst": PatchTST,
     "tsmixer": TSMixer,
+    "dlinear": DLinear,
+    "nlinear": NLinear,
 }
 
 
