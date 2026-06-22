@@ -3,10 +3,11 @@
 output_dir: checkpoints/generalist
 
 model:
-  type: nlinear
+  type: dlinear
   sequence_length: 10
-  num_channels: 6
-
+  input_dim: 6
+  output_dim: 6
+  kernel_size: 3  
 
 data:
   train_task: R+M+L
