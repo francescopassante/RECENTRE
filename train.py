@@ -34,7 +34,8 @@ train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids =
         device=device,
         time_augmentation = data_config.get("time_augmentation", False),
         neg_augmentation = data_config.get("neg_augmentation", False),
-        add_velocity = data_config.get("add_velocity", False)
+        add_velocity = data_config.get("add_velocity", False),
+        add_acceleration = data_config.get("add_acceleration", False)
     )
 )
 

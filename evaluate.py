@@ -68,8 +68,10 @@ for task in test_tasks:
     data = (data - mu) / sigma
     seq_len = config["data"]["sequence_length"]
     add_velocity = config["data"].get("add_velocity", False)
+    add_acceleration = config["data"].get("add_acceleration", False)
     ds = TimeSeriesDataset(
-        data, test_ids, sequence_length=seq_len, device=device, add_velocity=add_velocity
+        data, test_ids, sequence_length=seq_len, device=device,
+        add_velocity=add_velocity, add_acceleration=add_acceleration,
     )
     loader = GPUBatchLoader(ds, batch_size=1024, shuffle=False)
 
