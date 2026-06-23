@@ -10,7 +10,7 @@ def parse_task(task_string):
 
 class TimeSeriesDataset(Dataset):
 
-    def __init__(self, data, ids, sequence_length=10, device="cpu", time_augmentation=False, neg_augmentation=False, add_velocity=False):
+    def __init__(self, data, ids, sequence_length=10, device="cpu", time_augmentation=False, neg_augmentation=False, add_velocity=False, add_acceleration=False):
         if not torch.is_tensor(data):
             data = torch.from_numpy(data)
         self.data = data.to(device=device, dtype=torch.float32)
@@ -24,16 +24,27 @@ class TimeSeriesDataset(Dataset):
             data_neg = -self.data
             self.data = torch.cat([self.data, data_neg], dim=0)
             self.ids = np.concatenate([self.ids, self.ids])
-        if add_velocity:
-            # velocity channels: first difference along time of the (already
-            # normalized) positions, zero-padded at t=0 to preserve length and
-            # re-standardized per-dim for conditioning. Appended AFTER the 6
-            # position channels -> [N, T, 12]. The first 6 channels stay the
-            # positions, so the residual/baseline (x[:, -1, :6]) read only those.
-            vel = self.data[:, 1:, :] - self.data[:, :-1, :]               # [N, T-1, 6]
-            vel = torch.cat([torch.zeros_like(vel[:, :1, :]), vel], dim=1)  # -> [N, T, 6]
-            vel = vel / (vel.std(dim=(0, 1), keepdim=True) + 1e-6)         # per-dim scale
-            self.data = torch.cat([self.data, vel], dim=2)                # [N, T, 12]
+        if add_velocity or add_acceleration:
+            # derivative channels: first/second difference along time of the
+            # (already normalized) positions, zero-padded at the start to preserve
+            # length and re-standardized per-dim for conditioning. Appended AFTER
+            # the 6 position channels -> [N, T, 12] (vel) or [N, T, 18] (vel+acc).
+            # The first 6 channels stay the positions, so the residual/baseline
+            # (x[:, -1, :6]) read only those.
+            pos = self.data                                                # [N, T, 6]
+            extra = []
+            if add_velocity:
+                vel = pos[:, 1:, :] - pos[:, :-1, :]                       # [N, T-1, 6]
+                vel = torch.cat([torch.zeros_like(vel[:, :1, :]), vel], dim=1)  # -> [N, T, 6]
+                vel = vel / (vel.std(dim=(0, 1), keepdim=True) + 1e-6)     # per-dim scale
+                extra.append(vel)
+            if add_acceleration:
+                # second difference: a[t] = x[t] - 2*x[t-1] + x[t-2]
+                acc = pos[:, 2:, :] - 2 * pos[:, 1:-1, :] + pos[:, :-2, :]  # [N, T-2, 6]
+                acc = torch.cat([torch.zeros_like(acc[:, :2, :]), acc], dim=1)  # -> [N, T, 6]
+                acc = acc / (acc.std(dim=(0, 1), keepdim=True) + 1e-6)     # per-dim scale
+                extra.append(acc)
+            self.data = torch.cat([pos] + extra, dim=2)                   # [N, T, 6/12/18]
         self.time_span = sequence_length * 2
         self.N, self.T, self.D = self.data.shape
 
@@ -140,6 +151,7 @@ def split_data(
     time_augmentation=False,
     neg_augmentation=False,
     add_velocity=False,
+    add_acceleration=False,
     ids=None,
 ):
     """
@@ -249,15 +261,15 @@ def split_data(
     # keep the whole dataset on `device` (GPU) so GPUBatchLoader can gather
     # each batch there without per-batch host->device transfers
     train_datasets = [
-        TimeSeriesDataset(splits["train"][task], train_ids, sequence_length, device, time_augmentation=time_augmentation, neg_augmentation=neg_augmentation, add_velocity=add_velocity)
+        TimeSeriesDataset(splits["train"][task], train_ids, sequence_length, device, time_augmentation=time_augmentation, neg_augmentation=neg_augmentation, add_velocity=add_velocity, add_acceleration=add_acceleration)
         for task in splits["train"]
     ]
     val_datasets = [
-        TimeSeriesDataset(splits["val"][task], val_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity)
+        TimeSeriesDataset(splits["val"][task], val_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity, add_acceleration=add_acceleration)
         for task in splits["val"]
     ]
     test_datasets = [
-        TimeSeriesDataset(splits["test"][task], test_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity)
+        TimeSeriesDataset(splits["test"][task], test_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity, add_acceleration=add_acceleration)
         for task in splits["test"]
     ]
 
