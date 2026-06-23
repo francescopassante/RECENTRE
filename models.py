@@ -65,7 +65,7 @@ class GRUModel(nn.Module):
 
         # the mean head predicts a residual added to the last input frame;
         # variance is returned already exponentiated (do not exp again in callers)
-        return (x[:, -1, :] + y_mean), y_logvar.exp()
+        return (x[:, -1, :6] + y_mean), y_logvar.exp()
 
 
 class CausalConv1d(nn.Module):
@@ -183,7 +183,7 @@ class TCNModel(nn.Module):
 
         # the mean head predicts a residual added to the last input frame;
         # variance is returned already exponentiated (do not exp again in callers)
-        return (x[:, -1, :] + y_mean), y_logvar.exp()
+        return (x[:, -1, :6] + y_mean), y_logvar.exp()
 
 
 class PositionalEncoding(nn.Module):
@@ -281,7 +281,7 @@ class TransformerModel(nn.Module):
 
         # the mean head predicts a residual added to the last input frame;
         # variance is returned already exponentiated (do not exp again in callers)
-        return (x[:, -1, :] + y_mean), y_logvar.exp()
+        return (x[:, -1, :6] + y_mean), y_logvar.exp()
 
 
 class PatchTSTEncoderLayer(nn.Module):
@@ -394,7 +394,9 @@ class PatchTST(nn.Module):
         # this the GaussianNLL variance term can blow up and the loss goes NaN
         y_logvar = y_logvar.clamp(-10.0, 10.0)
 
-        return (x[:, -1, :] + y_mean), y_logvar.exp()
+        # output one prediction per channel; keep only the 6 position channels
+        # (extra channels exist when velocity features are appended to the input)
+        return (x[:, -1, :6] + y_mean[:, :6]), y_logvar[:, :6].exp()
 
 
 class TSMixerLayer(nn.Module):
@@ -461,7 +463,7 @@ class TSMixer(nn.Module):
 
     def forward(self, x):
         # x shape [B, T, D]
-        last_frame = x[:, -1, :]  # [B, D]
+        last_frame = x[:, -1, :6]  # [B, 6] positions only (extra channels with velocity)
         # time and channel mixing layers
         for layer in self.mixer_layers:
             x = layer(x)
@@ -473,7 +475,7 @@ class TSMixer(nn.Module):
 
         y_logvar = y_logvar.clamp(-10.0, 10.0)
 
-        return last_frame + y_mean, y_logvar.exp()
+        return last_frame + y_mean[:, :6], y_logvar[:, :6].exp()
 
 
 
@@ -517,7 +519,8 @@ class DLinear(nn.Module):
         mean_res = pred_trend + pred_season
         logvar = torch.clamp(pred_logvar, min=-10.0, max=10.0)
 
-        return x[:, -1, :] + mean_res, logvar.exp()
+        # keep only the 6 position channels (extra channels exist with velocity input)
+        return x[:, -1, :6] + mean_res[:, :6], logvar[:, :6].exp()
 
 
 
@@ -551,7 +554,8 @@ class NLinear(nn.Module):
             pred_logvar[:, c] = self.logvar_linears[c](x_t[:, c, :]).squeeze(-1)
 
         logvar = torch.clamp(pred_logvar, min=-10.0, max=10.0)
-        return x[:, -1, :] + pred_mean, logvar.exp()
+        # keep only the 6 position channels (extra channels exist with velocity input)
+        return x[:, -1, :6] + pred_mean[:, :6], logvar[:, :6].exp()
 
 
 # Add a new architecture by writing its class above and giving it a name here.

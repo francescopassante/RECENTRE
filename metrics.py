@@ -45,7 +45,7 @@ def evaluate(model, loader, mu, sigma, device, sigma_threshold=None, noise=None)
                 x = x + noise * torch.randn_like(x)
             # model returns (mean, variance)
             mean, var = model(x)
-            last_x = x[:, -1, :]
+            last_x = x[:, -1, :6]  # baseline = previous frame, 6 positions only
             std = var.sqrt() * sigma  # predicted std in physical (denormalized) units
 
             if sigma_threshold is not None:
