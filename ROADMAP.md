@@ -25,14 +25,19 @@ Leggenda impatto atteso: ⭐ basso · ⭐⭐ medio · ⭐⭐⭐ alto
 - [ ] **AdamW al posto di Adam** — `train.py:44`. Ora `Adam(weight_decay=1e-4)` applica
       una L2 accoppiata al momento adattivo, quasi inefficace. AdamW disaccoppia il decay.
       🟢 ⭐⭐ — *Loshchilov & Hutter, ICLR 2019, arXiv 1711.05101*
+	(APPLICATO)
 - [ ] **Dropout GRU 0.5 → {0.1, 0.2, 0.3}** — `configs/gru_generalist.yaml:10`. 0.5 in un
       GRU 2-layer agisce anche tra i layer ricorrenti + testa ⇒ sotto-parametrizzato. 🟢 ⭐⭐
+	(NON TOCCO LA GRU)
 - [ ] **TCN: kernel_size 2 → 3 e togli un blocco** — `configs/tcn_generalist.yaml:9-10`.
       Il campo recettivo (~31 frame) è già >> input (10): i blocchi dilation 8 (e parte 4)
       sono sprecati. Meno parametri, meno latenza. 🟢 ⭐⭐
+	(APPLICATO)
 - [ ] **Scheduler allineato all'obiettivo** — `engine.py:123`. Selezioni su `val_fdg` ma
       fai `scheduler.step(val_loss)`. Valuta cosine+warmup o step su `-val_fdg`. 🟢 ⭐
+	(PICCOLA INCONSISTENZA, NON L'HO IMPLEMENTATA)
 - [ ] **EMA dei pesi** (exponential moving average) durante il training. 🟢 ⭐
+	(NON PENSO FACCIA MALE, MA DUBITO ABBIA UN IMPATTO)
 
 **Exit criterion FASE 0:** GRU e TCN ri-allenati con i nuovi default, FD-gain ≥ baseline attuale.
 
@@ -44,6 +49,7 @@ Leggenda impatto atteso: ⭐ basso · ⭐⭐ medio · ⭐⭐⭐ alto
       Aggiungi differenze prime (e seconde) come canali extra: 6 → 12/18 canali
       (`input_dim` nei config va aggiornato). Il modello predice già un residuo (≈velocità):
       darglielo esplicito è l'inductive bias giusto per anticipare gli scatti. 🟡 ⭐⭐⭐
+	(NON IMPLEMENTATO?
 - [ ] **Likelihood Student-t al posto della Gaussiana** — `engine.py:46,69` + teste in
       `models.py` (aggiungi parametro ν, appreso o fisso ~3–5). Gli incrementi di moto sono
       a code pesanti: la Gaussiana paga gli spike gonfiando σ ovunque; la Student-t dà σ più
@@ -52,12 +58,14 @@ Leggenda impatto atteso: ⭐ basso · ⭐⭐ medio · ⭐⭐⭐ alto
 - [ ] **Termine FD pesato sul moto** — `engine.py:75-77`. `fd_gain.mean()` include i
       micro-movimenti dove il guadagno è negativo per costruzione e trascina giù la media.
       Pesa per la magnitudine del moto (o applica sopra soglia). 🟢 ⭐⭐
+	(SECONDO ME NON E' CORRETTO, IL MODELLO DEVE ESSERE MIGLIORE OVUNQUE)
 - [ ] **Sweep finestra/stride** — `sequence_length` nei config + stride in `dataset.py`
       (ora fisso a 2 in `__getitem__` e `GPUBatchLoader`). Griglia
       `sequence_length ∈ {10,20,30} × stride ∈ {1,2}`. Stride-1 dà contesto recente denso
       (utile per beccare lo scatto a t+1). 🟡 ⭐⭐⭐
+	(POSSIAMO AUMENTARE LA WINDOW MA NON LO STRIDE)
 - [ ] **Noise-injection in training** (robustezza al rumore — asse del benchmark proposal).
-      Già esiste `noise` in `metrics.evaluate()`; replicalo come augmentation in training. 🟢 ⭐⭐
+      Già esiste `noise` in `metrics.evaluate()`; replicalo come augmentation in training. 🟢 ⭐⭐	(SI PUO PROVARE)
 
 **Exit criterion FASE 1:** identificata la combinazione (feature × likelihood × finestra)
 che massimizza FD-gain a parità di backbone.
