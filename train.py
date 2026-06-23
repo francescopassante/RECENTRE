@@ -41,7 +41,7 @@ train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids =
 model = build_model(model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"model: {model_config['type']}  |  trainable params: {n_params:,}")
-optimizer = torch.optim.Adam(
+optimizer = torch.optim.AdamW(
     model.parameters(), lr=train_config["lr"], weight_decay=train_config["weight_decay"]
 )
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

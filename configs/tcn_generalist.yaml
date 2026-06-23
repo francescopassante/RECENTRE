@@ -6,8 +6,8 @@ model:
   type: tcn          # key in MODELS (models.py); add new architectures there
   input_dim: 6
   output_dim: 6     #two last heads: one for mus one for sigmas 
-  num_channels: [64, 128, 128, 64]   # 4 residual blocks; dilation 1,2,4,8
-  kernel_size: 2
+  num_channels: [64, 128]   # 2 residual blocks; dilation 1,2
+  kernel_size: 3
   dropout: 0.2
 
 data:
