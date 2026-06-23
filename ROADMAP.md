@@ -49,7 +49,7 @@ Leggenda impatto atteso: ⭐ basso · ⭐⭐ medio · ⭐⭐⭐ alto
       Aggiungi differenze prime (e seconde) come canali extra: 6 → 12/18 canali
       (`input_dim` nei config va aggiornato). Il modello predice già un residuo (≈velocità):
       darglielo esplicito è l'inductive bias giusto per anticipare gli scatti. 🟡 ⭐⭐⭐
-	(NON IMPLEMENTATO?
+	(IMPLEMENTATO)
 - [ ] **Likelihood Student-t al posto della Gaussiana** — `engine.py:46,69` + teste in
       `models.py` (aggiungi parametro ν, appreso o fisso ~3–5). Gli incrementi di moto sono
       a code pesanti: la Gaussiana paga gli spike gonfiando σ ovunque; la Student-t dà σ più
