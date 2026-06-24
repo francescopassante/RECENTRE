@@ -1,11 +1,13 @@
-# Generalist TCN: trained on all three tasks, tested on all three.
-# Same pipeline as the GRU generalist — only the model block differs.
+# Generalist TCN + velocity features: same as tcn_generalist but the input is
+# augmented with per-DOF velocity channels (first difference), so 6 -> 12 input
+# channels. Output stays 6 (the residual/baseline read only the positions).
+# A/B against tcn_generalist.yaml: only input_dim + add_velocity differ.
 output_dir: checkpoints/generalist
 
 model:
   type: tcn          # key in MODELS (models.py); add new architectures there
-  input_dim: 6
-  output_dim: 6     #two last heads: one for mus one for sigmas 
+  input_dim: 12      # 6 positions + 6 velocities (add_velocity below)
+  output_dim: 6     #two last heads: one for mus one for sigmas
   num_channels: [64, 128]   # 2 residual blocks; dilation 1,2
   kernel_size: 3
   dropout: 0.2
@@ -19,6 +21,7 @@ data:
   sequence_length: 10     # input window = sequence_length frames, stride 2 (spans 2x frames)
   time_augmentation: false
   neg_augmentation: false
+  add_velocity: true      # append first-difference (velocity) channels -> input_dim 12
 
 
 

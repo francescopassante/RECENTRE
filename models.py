@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.utils.parametrizations import weight_norm
 import math
 
@@ -64,7 +65,7 @@ class GRUModel(nn.Module):
 
         # the mean head predicts a residual added to the last input frame;
         # variance is returned already exponentiated (do not exp again in callers)
-        return (x[:, -1, :] + y_mean), y_logvar.exp()
+        return (x[:, -1, :6] + y_mean), y_logvar.exp()
 
 
 class CausalConv1d(nn.Module):
@@ -182,7 +183,7 @@ class TCNModel(nn.Module):
 
         # the mean head predicts a residual added to the last input frame;
         # variance is returned already exponentiated (do not exp again in callers)
-        return (x[:, -1, :] + y_mean), y_logvar.exp()
+        return (x[:, -1, :6] + y_mean), y_logvar.exp()
 
 
 class PositionalEncoding(nn.Module):
@@ -280,7 +281,7 @@ class TransformerModel(nn.Module):
 
         # the mean head predicts a residual added to the last input frame;
         # variance is returned already exponentiated (do not exp again in callers)
-        return (x[:, -1, :] + y_mean), y_logvar.exp()
+        return (x[:, -1, :6] + y_mean), y_logvar.exp()
 
 
 class PatchTSTEncoderLayer(nn.Module):
@@ -393,7 +394,9 @@ class PatchTST(nn.Module):
         # this the GaussianNLL variance term can blow up and the loss goes NaN
         y_logvar = y_logvar.clamp(-10.0, 10.0)
 
-        return (x[:, -1, :] + y_mean), y_logvar.exp()
+        # output one prediction per channel; keep only the 6 position channels
+        # (extra channels exist when velocity features are appended to the input)
+        return (x[:, -1, :6] + y_mean[:, :6]), y_logvar[:, :6].exp()
 
 
 class TSMixerLayer(nn.Module):
@@ -460,7 +463,7 @@ class TSMixer(nn.Module):
 
     def forward(self, x):
         # x shape [B, T, D]
-        last_frame = x[:, -1, :]  # [B, D]
+        last_frame = x[:, -1, :6]  # [B, 6] positions only (extra channels with velocity)
         # time and channel mixing layers
         for layer in self.mixer_layers:
             x = layer(x)
@@ -472,7 +475,87 @@ class TSMixer(nn.Module):
 
         y_logvar = y_logvar.clamp(-10.0, 10.0)
 
-        return last_frame + y_mean, y_logvar.exp()
+        return last_frame + y_mean[:, :6], y_logvar[:, :6].exp()
+
+
+
+
+class DLinear(nn.Module):
+    def __init__(self, sequence_length, input_dim, output_dim, kernel_size):
+        super().__init__()
+        assert kernel_size % 2 == 1
+
+        self.L = sequence_length
+        self.C = input_dim
+        self.pad = kernel_size // 2
+        self.kernel_size = kernel_size
+
+        self.trend_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+        self.season_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+        self.logvar_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+
+    def forward(self, x):
+        B, L, C = x.shape
+        assert L == self.L and C == self.C
+
+        x_t = x.permute(0, 2, 1)
+        
+        front = x_t[:, :, 0:1].repeat(1, 1, self.pad) #copy the first element
+        end = x_t[:, :, -1:].repeat(1, 1, self.pad) #copy the last element
+        x_padded = torch.cat([front, x_t, end], dim=-1)
+        
+        trend = F.avg_pool1d(x_padded, kernel_size=self.kernel_size, stride=1) # for each three elements takes the mean, with stride=1 the output has the same lenght and is the global (trend) movement
+        season = x_t - trend # oscillations wrt trend, small scale 
+
+        pred_trend = torch.zeros([B, self.C], device=x.device)
+        pred_season = torch.zeros([B, self.C], device=x.device)
+        pred_logvar = torch.zeros([B, self.C], device=x.device)
+
+        for c in range(self.C):
+            pred_trend[:, c] = self.trend_linears[c](trend[:, c, :]).squeeze(-1)
+            pred_season[:, c] = self.season_linears[c](season[:, c, :]).squeeze(-1)
+            pred_logvar[:, c] = self.logvar_linears[c](x_t[:, c, :]).squeeze(-1)
+
+        mean_res = pred_trend + pred_season
+        logvar = torch.clamp(pred_logvar, min=-10.0, max=10.0)
+
+        # keep only the 6 position channels (extra channels exist with velocity input)
+        return x[:, -1, :6] + mean_res[:, :6], logvar[:, :6].exp()
+
+
+
+
+
+class NLinear(nn.Module):
+    """Normalized-Linear (Zeng et al. 2022), channel-independent.
+
+    Subtracts the last frame before the linear map, one Linear(L→1) per channel.
+    """
+
+    def __init__(self, sequence_length, input_dim, output_dim):
+        super().__init__()
+        self.L = sequence_length
+        self.C = input_dim
+        self.linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+        self.logvar_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+
+    def forward(self, x):
+        B, L, C = x.shape
+        assert L == self.L and C == self.C
+
+        x_t = x.permute(0, 2, 1)       # [B, C, L]
+        x_norm = x_t - x_t[:, :, -1:]  # subtract last frame per channel
+
+        pred_mean = torch.zeros([B, self.C], device=x.device)
+        pred_logvar = torch.zeros([B, self.C], device=x.device)
+
+        for c in range(self.C):
+            pred_mean[:, c] = self.linears[c](x_norm[:, c, :]).squeeze(-1)
+            pred_logvar[:, c] = self.logvar_linears[c](x_t[:, c, :]).squeeze(-1)
+
+        logvar = torch.clamp(pred_logvar, min=-10.0, max=10.0)
+        # keep only the 6 position channels (extra channels exist with velocity input)
+        return x[:, -1, :6] + pred_mean[:, :6], logvar[:, :6].exp()
 
 
 # Add a new architecture by writing its class above and giving it a name here.
@@ -482,6 +565,8 @@ MODELS = {
     "transformer": TransformerModel,
     "patchtst": PatchTST,
     "tsmixer": TSMixer,
+    "dlinear": DLinear,
+    "nlinear": NLinear,
 }
 
 
