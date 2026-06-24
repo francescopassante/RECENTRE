@@ -12,6 +12,7 @@ nofootinbib
 \usepackage{subcaption}
 \usepackage{hyperref}
 \usepackage{xcolor}
+\usepackage{booktabs}
 
 \begin{document}
 
@@ -54,6 +55,13 @@ We build on their findings (no substantial difference in performance among the d
 \end{enumerate}
 
 % Commentare che questo fatto di trainare e testare su tutto è ovviamente la cosa migliore, i risultati migliorano, più dati, un unico modello da mandare in inferenza, ...
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/patient_timeseries.png}
+    \caption{Example patient time series showing predicted vs.\ true head-motion parameters across the six degrees of freedom.}
+    \label{fig:patient_timeseries}
+\end{figure}
 
 A subsequent analysis on physics-inspired models has shown that exploiting additional kinematic data such as velocity and acceleration parameters substantially improved test performances. So, 6 additional columns (already present in the raw dataset) containing velocity parameters for the 6 different dimensions are kept and used (the previous work discarded this data).
 
@@ -129,7 +137,7 @@ Finetuning in this project is intended as a per-task, per-patient finetuning. Af
 
 The finetuning implementation idea is the same as the original work one. It uses a modified loss function:
 \begin{equation}
-    L = L_{MSE} + \beta FD_{gain} + \lambda L_{L2SP}
+    L = L_{MSE} - \beta FD_{gain} + \lambda L_{L2SP}
 \end{equation}
 
 It differs from the pre-training loss function because it lacks an uncertainty calibration term (which is fine because the uncertainty head is frozen) and it has a $L^2$ starting point (L2SP) term that penalizes significant drifts from the pre-trained model:
@@ -273,6 +281,44 @@ The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investiga
     \caption{$\beta$ scan of the GRU model. As $\beta$ grows, $FD_{gain}$ peaks around $\beta=1$ before the loss over-weights the FD term and uncertainty calibration degrades.}
     \label{fig:beta_scan}
 \end{figure}
+
+As expected, uncertainty calibration degrades as $\beta$ grows near and past $\beta = 1$, while $FD_{gain}$ rises and then decreases again when $FD_{gain}$ is over-weighted in the loss. This is probably an overfitting phenomenon specific to the $FD_{gain}$ term: even though the loss function at very high $\beta$ is essentially a maximization of $FD_{gain}$, this doesn't generalize well to the validation/test set. 
+Across different scans, the three values $\beta = 0.1, 0.5, 1$ showed the best performances. We chose to use $\beta = 0.5$ as a middle ground between the optimally calibrated but lower $FD_{gain}$ focused $\beta = 0.1$ and the less calibrated but higher $FD_{gain}$ focused $\beta = 1$.
+
+\subsection{Data augmentation}
+
+Next, we investigated whether data augmentation could be helpful for this project. Since the translation and rotation parameters are physically related, there is little room for independent transformation of the motion parameters. We investigated two physically plausible transformations: time reversal and negation (sign flip). 
+
+\begin{table}[ht]
+\centering
+\caption{Effect of data augmentation on test-set performance.}
+\label{tab:augmentation}
+\small
+\begin{tabular}{l c c c}
+\toprule
+Augmentation & FD\textsubscript{pred} & FD-gain & \% Frames $>$ base \\
+\midrule
+None & 0.143 & 9.7 & 73.0 \\
+Time-reversal & 0.146 & 7.8 & 70.9  \\
+Negation & 0.141 & 11.4 & 75.2  \\
+Both & 0.145 & 8.5 & 71.9  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\subsection{TCN}
+
+The first new model we implemented is a temporal convolutional network (TCN). This network uses temporal convolution kernels at various level of dilations to create causal masks (i.e. the kernel is 0 for frames that are in the future with respect to the output frame). A schematic diagram of the network is found in Fig.~(\ref{fig:tcn_diagram}).
+
+\begin{figure}
+    \includegraphics[width=0.8 \linewidth]{figures/tcn_diagram.png}
+    \caption{Schematic diagram of the TCN model}
+    \label{fig:tcn_diagram}
+\end{figure}
+
+The TCN model showed remarkable performances, competitive with the original GRU architecture. 
 
 
 \section{Discussion}

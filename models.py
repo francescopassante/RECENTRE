@@ -68,7 +68,6 @@ class GRUModel(nn.Module):
 
 
 class CausalConv1d(nn.Module):
-    # Part of the TCN model
     """Dilated causal 1-D convolution — pad on the left, crop the right so the
     output at time t never sees future frames."""
 
@@ -161,13 +160,6 @@ class TCNModel(nn.Module):
         self.dp = nn.Dropout(p=dropout)
 
     def forward(self, x):
-        """
-        Args:
-            x (tensor): Shape [batch_size, sequence_length, input_dim]
-
-        Returns:
-            (mean, variance), each [batch_size, output_dim]
-        """
         h = x.transpose(1, 2)  # [B, T, D] -> [B, D, T]
         h = self.tcn(h)
         h = h[:, :, -1]  # last timestep -> [B, hidden]
