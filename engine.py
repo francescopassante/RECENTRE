@@ -68,8 +68,8 @@ def fit(
 
             base = nll(mean, y, var) if loss == "gaussian_nll" else mse(mean, y)
 
-            # baseline prediction is just the last frame
-            last_x = x[:, -1, :]
+            # baseline prediction is just the last frame (6 positions only)
+            last_x = x[:, -1, :6]
             fd_base = fd(last_x, y, mu, sigma)
             fd_pred = fd(mean, y, mu, sigma)
             fdg = fd_gain(fd_base, fd_pred)
@@ -110,7 +110,7 @@ def fit(
                     nll(mean, y, var) if loss == "gaussian_nll" else mse(mean, y)
                 ) * bs
                 val_n += bs
-                last_x = x[:, -1, :]
+                last_x = x[:, -1, :6]
                 val_fd_bases.append(fd(last_x, y, mu, sigma))
                 val_fd_preds.append(fd(mean, y, mu, sigma))
 
