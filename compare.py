@@ -2,8 +2,7 @@
 
 Each checkpoint carries its own config, so this works for any sweep — set
 GROUP_BY to the config field that varies (e.g. "train.beta" for a β-sweep, or
-"model.type" to compare architectures). Runs that share a group value are
-averaged (mean ± std shown as error bars / bands).
+"model.type" to compare architectures).
 
 Usage: python compare.py [checkpoints/beta_scan]
 """
