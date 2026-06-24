@@ -550,6 +550,164 @@ class NLinear(nn.Module):
         return x[:, -1, :6] + pred_mean[:, :6], logvar[:, :6].exp()
 
 
+# ---- Conformer: CNN-Transformer hybrid (Gulati et al., Interspeech 2020,
+# arXiv 2005.08100). Each block is the "macaron" structure: half-weight
+# feed-forward, multi-head self-attention, a convolution module, a second
+# half-weight feed-forward, then LayerNorm. The conv module models local motion
+# (spikes); attention models long-range context -- the natural fusion of this
+# repo's TCN and Transformer. Length-agnostic (reads the last timestep), so it
+# needs no sequence_length, like the GRU/TCN/Transformer.
+
+
+class ConformerFeedForward(nn.Module):
+    """Pre-LN feed-forward module; added to the residual with a 0.5 weight."""
+
+    def __init__(self, d_model, expansion=4, dropout=0.1):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, expansion * d_model),
+            nn.SiLU(),  # Swish, as in the paper
+            nn.Dropout(dropout),
+            nn.Linear(expansion * d_model, d_model),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class ConformerConvModule(nn.Module):
+    """Pointwise conv + GLU -> depthwise conv -> norm -> Swish -> pointwise conv.
+
+    The depthwise conv uses symmetric ('same') padding. The whole input window is
+    past history relative to the out-of-window target and only the last timestep
+    is read out for the prediction, so this never leaks the target. GroupNorm
+    (not BatchNorm as in the paper) keeps it batch-independent, matching the TCN.
+    """
+
+    def __init__(self, d_model, kernel_size=7, dropout=0.1):
+        super().__init__()
+        assert kernel_size % 2 == 1, "conv kernel must be odd for 'same' padding"
+        self.norm = nn.LayerNorm(d_model)
+        self.pointwise1 = nn.Conv1d(d_model, 2 * d_model, 1)  # GLU halves back to d_model
+        self.depthwise = nn.Conv1d(
+            d_model, d_model, kernel_size,
+            padding=(kernel_size - 1) // 2, groups=d_model,
+        )
+        self.gnorm = nn.GroupNorm(1, d_model)
+        self.act = nn.SiLU()
+        self.pointwise2 = nn.Conv1d(d_model, d_model, 1)
+        self.dp = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x: [B, T, d_model]
+        h = self.norm(x).transpose(1, 2)        # [B, d_model, T]
+        h = F.glu(self.pointwise1(h), dim=1)    # [B, d_model, T]
+        h = self.act(self.gnorm(self.depthwise(h)))
+        h = self.dp(self.pointwise2(h))
+        return h.transpose(1, 2)                # [B, T, d_model]
+
+
+class ConformerAttention(nn.Module):
+    """Pre-LN multi-head self-attention. Bidirectional: the input window is all
+    past history relative to the (out-of-window) target, so no causal mask."""
+
+    def __init__(self, d_model, nhead, dropout=0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(
+            d_model, nhead, dropout=dropout, batch_first=True
+        )
+        self.dp = nn.Dropout(dropout)
+
+    def forward(self, x):
+        h = self.norm(x)
+        h, _ = self.attn(h, h, h, need_weights=False)
+        return self.dp(h)
+
+
+class ConformerBlock(nn.Module):
+    """One Conformer block (macaron FFN sandwich around attention + conv)."""
+
+    def __init__(self, d_model, nhead, ff_expansion, conv_kernel, dropout):
+        super().__init__()
+        self.ff1 = ConformerFeedForward(d_model, ff_expansion, dropout)
+        self.attn = ConformerAttention(d_model, nhead, dropout)
+        self.conv = ConformerConvModule(d_model, conv_kernel, dropout)
+        self.ff2 = ConformerFeedForward(d_model, ff_expansion, dropout)
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, x):
+        x = x + 0.5 * self.ff1(x)
+        x = x + self.attn(x)
+        x = x + self.conv(x)
+        x = x + 0.5 * self.ff2(x)
+        return self.norm(x)
+
+
+class ConformerModel(nn.Module):
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        d_model=128,
+        nhead=4,
+        num_layers=2,
+        ff_expansion=4,
+        conv_kernel=7,
+        dropout=0.1,
+        max_len=512,
+    ):
+        """CNN-Transformer hybrid. Same prediction contract as the other models:
+        input [B, T, input_dim] -> (mean, variance); the mean head predicts a
+        residual added to the last input frame, variance is returned exponentiated.
+        """
+        super().__init__()
+        assert (
+            d_model % nhead == 0
+        ), f"d_model ({d_model}) must be divisible by nhead ({nhead})"
+
+        self.input_proj = nn.Linear(input_dim, d_model)
+        self.pos_enc = PositionalEncoding(d_model, max_len=max_len, dropout=dropout)
+        self.blocks = nn.ModuleList(
+            [
+                ConformerBlock(d_model, nhead, ff_expansion, conv_kernel, dropout)
+                for _ in range(num_layers)
+            ]
+        )
+
+        # same head as the other architectures (names kept identical on purpose:
+        # fine-tuning freezes fc_logvar and groups fc1/bn_fc1/fc_mean as the head)
+        self.fc1 = nn.Linear(d_model, d_model)
+        self.bn_fc1 = nn.LayerNorm(d_model)
+        self.fc_mean = nn.Linear(d_model, output_dim)
+        self.fc_logvar = nn.Linear(d_model, output_dim)
+        self.relu = nn.ReLU()
+        self.dp = nn.Dropout(p=dropout)
+
+    def forward(self, x):
+        # x: [B, T, D]
+        h = self.input_proj(x)  # [B, T, d_model]
+        h = self.pos_enc(h)
+        for block in self.blocks:
+            h = block(h)
+
+        h = h[:, -1, :]  # last timestep -> [B, d_model]
+        h = self.fc1(h)
+        h = self.bn_fc1(h)
+        h = self.relu(h)
+        h = self.dp(h)
+
+        y_mean = self.fc_mean(h)
+        y_logvar = self.fc_logvar(h)
+
+        # the mean head predicts a residual added to the last input frame;
+        # variance is returned already exponentiated (do not exp again in callers)
+        return (x[:, -1, :6] + y_mean), y_logvar.exp()
+
+
 # Add a new architecture by writing its class above and giving it a name here.
 MODELS = {
     "gru": GRUModel,
@@ -559,6 +717,7 @@ MODELS = {
     "tsmixer": TSMixer,
     "dlinear": DLinear,
     "nlinear": NLinear,
+    "conformer": ConformerModel,
 }
 
 
