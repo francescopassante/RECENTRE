@@ -250,7 +250,29 @@ We also reproduced the per-patient fine-tuning result of the previous work. Fig.
 \section{Results}
 
 \subsection{$\beta$ scan}
-The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investigated the performances of the original GRU model as $\beta$ is swept over many orders of magnitude. In particular, we focused on the most relevant metrics that could sharply depend on the relative importance between the negative log likelihood and the $FD_{gain}$ term. Since the negative log likelihood term is the only one explicitly constraining the uncertainty of the prediction,we expect that as $\beta$ grows, the uncertainty calibration will get worse. Simultaneously, $FD_{gain}$ and the percentage of improved frames (relative to baseline) should rise with $\beta$. Our empi
+The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investigated the performances of the original GRU model as $\beta$ is swept over many orders of magnitude. In particular, we focused on the most relevant metrics that could sharply depend on the relative importance between the negative log likelihood and the $FD_{gain}$ term. Since the negative log likelihood term is the only one explicitly constraining the uncertainty of the prediction,we expect that as $\beta$ grows, the uncertainty calibration will get worse. On the other hand, $FD_{gain}$ and the percentage of improved frames (relative to baseline) should rise with $\beta$. Our empirical results are summarized in Fig.~(\ref{fig:beta_scan}).
+
+\begin{figure}[t]
+    \centering
+    \begin{subfigure}{\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{../results/beta_scan/01_headline_metrics.png}
+        \caption{Headline metrics vs.\ $\beta$: test NLL, mean FD vs.\ baseline, $FD_{gain}$, and MAE vs.\ predicted $\sigma$.}
+        \label{fig:beta_scan_headline}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    \begin{subfigure}{\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{../results/beta_scan/02_calibration.png}
+        \caption{Calibration vs.\ $\beta$: empirical coverage of the $\pm1\sigma$ and $\pm2\sigma$ predictive intervals against their Gaussian targets.}
+        \label{fig:beta_scan_calibration}
+    \end{subfigure}
+
+    \caption{$\beta$ scan of the GRU model. As $\beta$ grows, $FD_{gain}$ peaks around $\beta=1$ before the loss over-weights the FD term and uncertainty calibration degrades.}
+    \label{fig:beta_scan}
+\end{figure}
 
 
 \section{Discussion}

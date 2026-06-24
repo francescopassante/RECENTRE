@@ -143,7 +143,7 @@ def make_figures(
     ax.set_xticklabels(xlabels)
     ax.set_xlabel(group_by)
     ax.set_ylabel("Test NLL")
-    ax.set_title("NLL — lower is better")
+    ax.set_title("NLL")
 
     ax = axes[0, 1]
     ax.plot(x, fd_pred, "o-", color="blue", label="Model")
@@ -157,7 +157,7 @@ def make_figures(
     ax.set_xticklabels(xlabels)
     ax.set_xlabel(group_by)
     ax.set_ylabel("Mean FD (mm)")
-    ax.set_title("FD — lower is better")
+    ax.set_title("FD")
     ax.legend()
 
     ax = axes[1, 0]
@@ -167,7 +167,7 @@ def make_figures(
     ax.set_xticklabels(xlabels)
     ax.set_xlabel(group_by)
     ax.set_ylabel("FD gain")
-    ax.set_title("FD gain — higher is better")
+    ax.set_title("FD gain")
 
     ax = axes[1, 1]
     ax.plot(x, mae_total, "o-", color="blue", label="MAE")

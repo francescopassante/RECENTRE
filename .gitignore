@@ -2,3 +2,12 @@ __pycache__/
 datasets/
 checkpoints/
 .DS_Store
+
+# LaTeX build artifacts
+presentation/*.aux
+presentation/*.fdb_latexmk
+presentation/*.fls
+presentation/*.log
+presentation/*.out
+presentation/*.synctex.gz
+presentation/mainNotes.bib
