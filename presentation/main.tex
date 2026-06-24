@@ -7,7 +7,9 @@ nofootinbib
 ]{revtex4-2}
 
 \usepackage{amsmath,amssymb}
+\usepackage{float}
 \usepackage{graphicx}
+\usepackage{subcaption}
 \usepackage{hyperref}
 \usepackage{xcolor}
 
@@ -22,13 +24,8 @@ nofootinbib
 \date{\today}
 
 \begin{abstract}
-We build a machine learning framework to train, validate, finetune models and perform data analysis
-for the RECENTRE (REal-time motion CorrEction in magNeTic REsonance) project. We first reproduce the 
-original results of the RECENTRE project based on a GRU network through a config-oriented software design, 
-then we introduce and evaluate more modern machine learning architectures, studying in what regimes they are 
-most effective and whether they're better candidates for real time deployment in MRI machines. 
-Model size, inference latency, robustness to noise and uncertainty calibration are among the many different
-metrics by which we evaluate the performances of each of the proposed architectures. 
+We build a machine learning framework to train, validate, finetune models and perform data analysis for the RECENTRE (REal-time motion CorrEction in magNeTic REsonance) project. We first reproduce the original results of the RECENTRE project based on a GRU network through a config-oriented software design, then we introduce and evaluate more modern machine learning architectures, studying in what regimes they are most effective and whether they're better candidates for real time deployment in MRI machines. 
+Model size, inference latency, robustness to noise and uncertainty calibration are among the many different metrics by which we evaluate the performances of each of the proposed architectures. 
 
 \end{abstract}
 
@@ -36,29 +33,18 @@ metrics by which we evaluate the performances of each of the proposed architectu
 
 \section{Introduction}
 
-The RECENTRE project is concerned with real time prediction and correction of head motion parameters. 
-A crucial fact to take into account when building models for this task is the inference latency of the model.
-The temporal distance between the frame recording and the subsequent next frame prediction must be of the order of $100$ ms, so the inference latency must be well below
-this limit to account for other software- and hardware-related latencies. 
+The RECENTRE project is concerned with real time prediction and correction of head motion parameters. A crucial fact to take into account when building models for this task is the inference latency of the model. The temporal distance between the frame recording and the subsequent next frame prediction must be of the order of $100$ ms, so the inference latency must be well below this limit to account for other software- and hardware-related latencies. 
 
-The main goals of the present project are to reproduce the original paper's (\cite{}) results, which are based on a GRU network, 
-and evaluate modern machine learning architectures such as transformers, TCNs, and physics-informed models to study whether they are 
-better candidates for the project's task.
+The main goals of the present project are to reproduce the original paper's (\cite{}) results, which are based on a GRU network, and evaluate modern machine learning architectures such as transformers, TCNs, and physics-informed models to study whether they are better candidates for the project's task.
 
-Given the large amount of models and the large amount of training runs (different model hyperparameters, different train / test tasks, data augmentation, etc...) 
-we introduced a config-based software design pattern to keep the code and the output data well organized. This way, new models can be implemented and registered in a model registry dictionary;
-the hyperparameters of the model, the preprocessing pipeline of the data and the training details (epochs, learning rate, ...) can all be specified in a minimal, easy-to-read configuration file.
-This way, we built a solid end-to-end pipeline from the original raw data and model specification to the full training and evaluation loop. 
+Given the large amount of models and the large amount of training runs (different model hyperparameters, different train / test tasks, data augmentation, etc...) we introduced a config-based software design pattern to keep the code and the output data well organized. This way, new models can be implemented and registered in a model registry dictionary;
+the hyperparameters of the model, the preprocessing pipeline of the data and the training details (epochs, learning rate, ...) can all be specified in a minimal, easy-to-read configuration file. This way, we built a solid end-to-end pipeline from the original raw data and model specification to the full training and evaluation loop. 
 
 
 \section{Dataset}
 
-The raw dataset is taken from the Human Connectome Project (HCP), which consists in navigator data taken by MRI machines with a sampling frequency
-of $720$ ms. Each 'frame' has 6 motion parameters: 3 of them are translation parameters describing the head position of the patient, the remaining 3 are rotation parameters indicating
-the inclination of the patient's head. The dataset contains three different scenarios: the "R" (resting) one, where patients
-were resting while the MRI scan was running, then the "M" (memory) one, where patients were recollecting memories, and the "L" (language) one, where patients were actively talking.
-There are a total of 3221 time series among the three tasks. Each time series is associated with a patient. The preprocessing pipeline discards 140 time series, so that 1027 patients are all 
-associated with the 3 time series of the "R", "M", "L" tasks. The three tasks have different time lengths. The R data is 1200 frames long, while the M and L are 405 and 316 frames long, respectively.
+The raw dataset is taken from the Human Connectome Project (HCP), which consists in navigator data taken by MRI machines with a sampling frequency of $720$ ms. Each 'frame' has 6 motion parameters: 3 of them are translation parameters describing the head position of the patient, the remaining 3 are rotation parameters indicating the inclination of the patient's head. The dataset contains three different scenarios: the "R" (resting) one, where patients were resting while the MRI scan was running, then the "M" (memory) one, where patients were recollecting memories, and the "L" (language) one, where patients were actively talking.
+There are a total of 3221 time series among the three tasks. Each time series is associated with a patient. The preprocessing pipeline discards 140 time series, so that 1027 patients are all associated with the 3 time series of the "R", "M", "L" tasks. The three tasks have different time lengths. The R data is 1200 frames long, while the M and L are 405 and 316 frames long, respectively.
 Lots of efforts were put in the thesis and paper (\cite{}) to study different data splits for training and testing, e.g. considering the "cross-task" scenario or "cross-patient" scenario.
 We build on their findings (no substantial difference in performance among the different scenarios) by: 
 
@@ -69,32 +55,203 @@ We build on their findings (no substantial difference in performance among the d
 
 % Commentare che questo fatto di trainare e testare su tutto è ovviamente la cosa migliore, i risultati migliorano, più dati, un unico modello da mandare in inferenza, ...
 
-A subsequent analysis on physics-inspired models has shown that exploiting additional kinematic data such as velocity and acceleration parameters 
-substantially improved test performances. So, 6 additional columns (already present in the raw dataset) containing velocity parameters for the 6 
-different dimensions are kept and used (the previous work discarded this data).
+A subsequent analysis on physics-inspired models has shown that exploiting additional kinematic data such as velocity and acceleration parameters substantially improved test performances. So, 6 additional columns (already present in the raw dataset) containing velocity parameters for the 6 different dimensions are kept and used (the previous work discarded this data).
 
 
 \subsection{Data augmentation}
 
-The dataset contains roughly 2 million input window - frame target pairs, so data augmentation is not a priority for the project.
-Nevertheless, we investigated whether data augmentation could provide a benefit to model performances. Since the translation and rotation
-parameters are physically linked, there is no much room for independent transformations of the input data. However, two possible transformations 
-are considered for data augmentation: time reversal and sign flip. These two augmentation techniques can quadruple the initial training dataset.
+The dataset contains roughly 2 million input window - frame target pairs, so data augmentation is not a priority for the project. Nevertheless, we investigated whether data augmentation could provide a benefit to model performances. Since the translation and rotation parameters are physically linked, there is no much room for independent transformations of the input data. However, two possible transformations are considered for data augmentation: time reversal and sign flip. These two augmentation techniques can quadruple the initial training dataset.
 
 
 \subsection{Preprocessing}
-The preprocessing pipeline consists in extracting the raw data from the HCP files, converting degrees to radians, ensuring a standardized 
-time length for each of the different tasks, and ensuring that each patient is associated with its three runs. 
+The preprocessing pipeline consists in extracting the raw data from the HCP files, converting degrees to radians, ensuring a standardized time length for each of the different tasks, and ensuring that each patient is associated with its three runs. 
 The preprocessing pipeline is meant to be run only once, as it builds three processed dictionaries (one for each task) that associate each patient id with its time series for that task.
+All successive scripts read from the processed datasets.
 
 
 \section{Methodology}
 
+\subsection{Pipeline}
+
+All the tested models follow the same protocol:
+\begin{enumerate}
+    \item Model definition and registration
+    \item Training config compilation
+    \item Training loop
+    \item Evaluation loop and data analysis
+    \item Optional fine-tuning
+\end{enumerate}
+
+After model definition, typically as a torch module, a training config is necessary to run the training loop. The model hyperparameters, training and testing tasks, split percentages, data augmentation, loss function, training epochs, learning rate and so on are all specified in the training config, so that all the relevant parameters are easy to read, especially for systmeatic comparisons between many different models and runs.
+
+After the training is done, the model weights, the optimizer and scheduler states, training configs, info about the training and testing tasks and patient ids are stored in a checkpoint to be used for testing, finetuning or resuming training. 
+
+\subsection{Metrics}
+
+The fundamental metric that describes the prediction error of a single frame is called frame displacement ($FD$). It is defined as
+\begin{equation}
+    FD(t) = \sum_{i=1}^3 |y_i(t) - \hat{y}_i(t)| + 50 \text{mm} \sum_{i=4}^6 |y_i(t) - \hat{y_i}(t)|
+\end{equation}
+
+it is essentially an absolute error that combines translation error ($i=1,2,3$) and rotation error ($i=4,5,6$), where the radians are scaled by $50$mm, the average skull radius.
+This metric is a single scalar describing the absolute error of the prediction relative to the true position. Since the sampling rate is $720$ms, the lag1-model that predicts the last observed position as the next one is already a solid baseline. We'll refer to the lag-1 model as the baseline model. Naturally, we can define the $FD_{base}$ as the frame displacement for the lag1-model:
+
+\begin{equation}
+    FD_{base}(t) = \sum_{i=1}^3 |y_i(t) - y_i(t-1)| + 50 \text{mm}\sum_{i=4}^6 |y_i(t) - y_i(t-1)|
+\end{equation}
+
+Another useful metric is the $FD_{gain}$, that is the relative difference between $FD_{base}$ and $FD_{model}$:
+\begin{equation}
+    FD_{gain} = \frac{FD_{base} - FD_{model}}{FD_{base}}
+\end{equation}
+
+We aim for large, positive $FD_{gain}$. 
+
+Another useful metric is the percentage of frames that is improved (i.e. lower frame displacement) with respect to the baseline. Analogously, we can look at the percentage of patients with an average $FD_{gain} > 0$.
 
 
+\subsection{Loss function}
+
+We use the same form of the loss function as the original work:
+\begin{equation}
+    L = L_{NLL} + \beta FD_{gain}
+\end{equation}
+
+Where $L_{NLL}$ is the gaussian negative log likelihood term that is needed for both prediction accuracy and uncertainty calibration.
+
+Using $FD_{gain}$ in the loss is a way to penalize the model if it does worse than the baseline model, especially when the baseline model is performing well in that particular frame. This loss term is essentially specifying that we'd rather accept large FDs in frames where the baseline has poor performance than have frames where the model is worse than the baseline.
+
+We also reduce the learning rate on loss plateau and use early stopping. 
+
+\subsection{Finetuning}
+
+Finetuning in this project is intended as a per-task, per-patient finetuning. After a model has been pre-trained on many different time series, it can be additionally fine-tuned on the first part of a time series so that the model can be adapted to the particularities of the patient and task under observation. The original work has found a substantial improvement in test performance after finetuning, relative to the pre-trained generalist model.
+
+The finetuning implementation idea is the same as the original work one. It uses a modified loss function:
+\begin{equation}
+    L = L_{MSE} + \beta FD_{gain} + \lambda L_{L2SP}
+\end{equation}
+
+It differs from the pre-training loss function because it lacks an uncertainty calibration term (which is fine because the uncertainty head is frozen) and it has a $L^2$ starting point (L2SP) term that penalizes significant drifts from the pre-trained model:
+\begin{equation}
+    L_{L2SP} = \sum_i (w_i - w^0_i)^2
+\end{equation}
+where $w^0_i$ is the i-th pretrained model weight.
+
+Our own implementation aims to standardize this procedure across all the implemented models, and make all the finetuning parameters readily accessible in a dedicated finetuning config file. Each model inherits from a TunableModel base class that automatically splits the model parameters into a frozen variance head, a higher learning rate mean head and a lower learning rate body. The learning rates and the dropout rate are configurable in the finetuning config.
+
+
+\section{Reproduction of previous results}
+
+The first part of the project is concerned with reproducing the results of the previous thesis and paper. First, we refactored the codebase, fixed minor bugs and organized it in a config-oriented design, with standardization of train/test scenarios, model definitions, finetuning pipeline, model / data / train hyperparameters, data analysis and visualizations. 
+
+Then, we focused on reproducing these GRU results from the previous work:
+\begin{enumerate}
+    \item Paper main result: $R^2 > 0.87$ for all the 3 tasks and 6 dimensions.
+    \item Thesis result: roughly $70\%$ frames have $FD_{gain} > 0$.
+    \item Thesis result: positive $FD_{gain}$ frames percentage rises to $75\%$ for the finetuned model.
+\end{enumerate}
+
+We first reproduced the original results by considering the per-task training and testing, but we soon decided to directly improve these results by adopting some fairly obvious refinements on top of the original structure. First, we dropped the cross-task scenario debate and decided to train and test a single model on all three tasks. We obviously used different patients for the train, validation and test splits to avoid any data leakage. The hyperparameters of the model are left the same. The results are visible in Fig. (\ref{fig:reproduce_gru_results})
+
+
+\begin{figure*}[t]
+    \centering
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=0.78\textwidth]{../results/gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone/02_true_vs_predicted_gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone.png}
+        \caption{True vs.\ predicted value for each of the six motion dimensions, with per-dimension $R^2$. All dimensions reach $R^2 > 0.94$.}
+        \label{fig:reproduce_true_vs_pred}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=0.92\textwidth]{../results/gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone/03_fd_distribution_gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone.png}
+        \caption{Framewise-displacement distribution of the model vs.\ the lag-1 baseline (left) and the per-sample $FD_{gain}$ distribution (right): $74.8\%$ of samples are improved over the baseline.}
+        \label{fig:reproduce_fd_distribution}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{../results/gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone/04_per_patient_fdg_gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone.png}
+        \vspace{-0.5em}
+        \caption{Per-patient mean $FD_{gain}$ sorted within each task (over $92\%$ of patients improved in every task) and per-patient baseline vs.\ model FD (rightmost panel).}
+        \label{fig:reproduce_per_patient}
+    \end{subfigure}
+
+    \caption{Reproduction of the GRU results with a single generalist model trained and tested on all three tasks (R+M+L) over disjoint patient splits. (a)~per-dimension agreement, (b)~framewise-displacement and per-sample gain distributions, (c)~per-patient gains.}
+    \label{fig:reproduce_gru_results}
+\end{figure*}
+
+
+We also reproduced the per-patient fine-tuning result of the previous work. Fig.~(\ref{fig:finetune_per_patient}) summarizes the effect of fine-tuning, and Fig.~(\ref{fig:finetune_before_after}) compares each patient before and after fine-tuning.
+
+\begin{figure*}[t]
+    \centering
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_04_per_patient_fdg.png}
+        \caption{Per-patient mean $FD_{gain}$ sorted within each task (over $95\%$ of patients improved in every task) and per-patient baseline vs.\ model FD (rightmost panel).}
+        \label{fig:finetune_per_patient_fdg}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    \begin{subfigure}{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_delta_kde.png}
+        \caption{Distribution of the per-patient $FD_{gain}$ improvement (fine-tuned $-$ pretrained); the overall mean shift is $+0.047$.}
+        \label{fig:finetune_delta_kde}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_mse_per_dim.png}
+        \caption{Per-dimension MSE before and after fine-tuning (rotations scaled by $50^2$).}
+        \label{fig:finetune_mse_per_dim}
+    \end{subfigure}
+
+    \caption{Per-patient fine-tuning of the generalist GRU model (R+M+L). (a)~per-patient gains, (b)~distribution of the gain improvement over the pretrained model, (c)~per-dimension MSE reduction.}
+    \label{fig:finetune_per_patient}
+\end{figure*}
+
+\begin{figure*}[t]
+    \centering
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_fdg_scatter.png}
+        \caption{$FD_{gain}$ (win rate $80\%$).}
+        \label{fig:finetune_fdg_scatter}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_fd_pred_scatter.png}
+        \caption{Predicted FD (points below $y=x$ improved).}
+        \label{fig:finetune_fd_pred_scatter}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_pct_improved_scatter.png}
+        \caption{Frame-level win rate.}
+        \label{fig:finetune_pct_improved_scatter}
+    \end{subfigure}
+
+    \caption{Per-patient metrics before vs.\ after fine-tuning, colored by task. Each point is one patient; the dashed line marks no change ($y=x$).}
+    \label{fig:finetune_before_after}
+\end{figure*}
 
 
 \section{Results}
+
+\subsection{$\beta$ scan}
+The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investigated the performances of the original GRU model as $\beta$ is swept over many orders of magnitude. In particular, we focused on the most relevant metrics that could sharply depend on the relative importance between the negative log likelihood and the $FD_{gain}$ term. Since the negative log likelihood term is the only one explicitly constraining the uncertainty of the prediction,we expect that as $\beta$ grows, the uncertainty calibration will get worse. Simultaneously, $FD_{gain}$ and the percentage of improved frames (relative to baseline) should rise with $\beta$. Our empi
+
 
 \section{Discussion}
 
