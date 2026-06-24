@@ -23,7 +23,7 @@ model_config, data_config, train_config = (
 device = get_device()
 
 # Split patient in train/val/test
-train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids = (
+train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids, feat_std = (
     split_data(
         train_task=data_config["train_task"],
         test_task=data_config["test_task"],
@@ -83,6 +83,9 @@ checkpoint = {
     "test_ids": test_ids,
     "best_epoch": best_epoch,
     "pred_sigma": pred_sigma,
+    # per-task velocity/acceleration scales from the train split, so evaluate.py
+    # rebuilds the input features with the same scaling (no val/test leakage)
+    "feat_std": feat_std,
     # optimizer/scheduler state so resume.py can warm-restart at the right LR
     "optimizer_state": optimizer.state_dict(),
     "scheduler_state": scheduler.state_dict(),

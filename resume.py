@@ -26,7 +26,7 @@ model_config, data_config, train_config = (
 device = get_device()
 
 # Reuse the exact split saved in the checkpoint (no reliance on the rng seed)
-train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids = (
+train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids, feat_std = (
     split_data(
         train_task=data_config["train_task"],
         test_task=data_config["test_task"],
@@ -129,6 +129,7 @@ checkpoint = {
     "test_ids": test_ids,
     "best_epoch": best_epoch,
     "pred_sigma": pred_sigma,
+    "feat_std": feat_std,
     "optimizer_state": optimizer.state_dict(),
     "scheduler_state": scheduler.state_dict(),
 }

@@ -69,9 +69,13 @@ for task in test_tasks:
     seq_len = config["data"]["sequence_length"]
     add_velocity = config["data"].get("add_velocity", False)
     add_acceleration = config["data"].get("add_acceleration", False)
+    # reuse the train-split velocity/acceleration scales saved in the checkpoint
+    # (per task), so the eval features are scaled exactly as in training
+    vel_std, acc_std = ckpt.get("feat_std", {}).get(task, (None, None))
     ds = TimeSeriesDataset(
         data, test_ids, sequence_length=seq_len, device=device,
         add_velocity=add_velocity, add_acceleration=add_acceleration,
+        vel_std=vel_std, acc_std=acc_std,
     )
     loader = GPUBatchLoader(ds, batch_size=1024, shuffle=False)
 
