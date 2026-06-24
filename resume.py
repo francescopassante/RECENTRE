@@ -59,7 +59,7 @@ def val_fdg(m):
 start_fdg = val_fdg(model)
 print(f"loaded model val FD-gain: {start_fdg:.4f}")
 
-optimizer = torch.optim.Adam(
+optimizer = torch.optim.AdamW(
     model.parameters(), lr=train_config["lr"], weight_decay=train_config["weight_decay"]
 )
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

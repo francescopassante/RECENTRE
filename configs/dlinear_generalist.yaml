@@ -1,0 +1,28 @@
+# DLinear generalist: channel-independent decomposition linear (Zeng et al. 2022).
+# sequence_length must match data.sequence_length below.
+output_dir: checkpoints/generalist
+
+model:
+  type: dlinear
+  sequence_length: 10
+  input_dim: 6
+  output_dim: 6
+  kernel_size: 3      # moving-average window for trend extraction (must be odd)
+
+data:
+  train_task: R+M+L
+  test_task: R+M+L
+  batch_size: 16384
+  split_percentages: [0.7, 0.15, 0.15]
+  cross_patients: false
+  sequence_length: 10
+  time_augmentation: false
+  neg_augmentation: false
+
+train:
+  loss: gaussian_nll
+  beta: 0.5
+  epochs: 150
+  patience: 100
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
