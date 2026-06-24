@@ -10,10 +10,14 @@ def parse_task(task_string):
 
 class TimeSeriesDataset(Dataset):
 
-    def __init__(self, data, ids, sequence_length=10, device="cpu", time_augmentation=False, neg_augmentation=False, add_velocity=False, add_acceleration=False):
+    def __init__(self, data, ids, sequence_length=10, device="cpu", time_augmentation=False, neg_augmentation=False, add_velocity=False, add_acceleration=False, vel_std=None, acc_std=None):
         if not torch.is_tensor(data):
             data = torch.from_numpy(data)
         self.data = data.to(device=device, dtype=torch.float32)
+        # per-dim scales for the velocity/acceleration channels; stay None unless
+        # those channels are added (set below, or passed in from the train split)
+        self.vel_std = vel_std
+        self.acc_std = acc_std
         if time_augmentation == True:
             data_rev = self.data.flip(1)
             self.data = torch.cat([self.data, data_rev], dim=0)
@@ -27,23 +31,32 @@ class TimeSeriesDataset(Dataset):
         if add_velocity or add_acceleration:
             # derivative channels: first/second difference along time of the
             # (already normalized) positions, zero-padded at the start to preserve
-            # length and re-standardized per-dim for conditioning. Appended AFTER
+            # length and scaled per-dim for conditioning. Appended AFTER
             # the 6 position channels -> [N, T, 12] (vel) or [N, T, 18] (vel+acc).
             # The first 6 channels stay the positions, so the residual/baseline
             # (x[:, -1, :6]) read only those.
+            # Differences are taken over the stride (x[t]-x[t-2]), not adjacent
+            # frames, so they only use frames present in the stride-2 windows and
+            # don't leak the odd frames the model never sees. The per-dim scale
+            # (vel_std/acc_std) is passed in from the train split to avoid using
+            # val/test statistics; if None it is computed from this data.
             pos = self.data                                                # [N, T, 6]
             extra = []
             if add_velocity:
-                vel = pos[:, 1:, :] - pos[:, :-1, :]                       # [N, T-1, 6]
-                vel = torch.cat([torch.zeros_like(vel[:, :1, :]), vel], dim=1)  # -> [N, T, 6]
-                vel = vel / (vel.std(dim=(0, 1), keepdim=True) + 1e-6)     # per-dim scale
-                extra.append(vel)
+                vel = pos[:, 2:, :] - pos[:, :-2, :]                       # [N, T-2, 6]
+                vel = torch.cat([torch.zeros_like(vel[:, :2, :]), vel], dim=1)  # -> [N, T, 6]
+                if vel_std is None:
+                    vel_std = vel.std(dim=(0, 1), keepdim=True) + 1e-6     # per-dim scale
+                self.vel_std = vel_std
+                extra.append(vel / vel_std.to(vel.device))
             if add_acceleration:
-                # second difference: a[t] = x[t] - 2*x[t-1] + x[t-2]
-                acc = pos[:, 2:, :] - 2 * pos[:, 1:-1, :] + pos[:, :-2, :]  # [N, T-2, 6]
-                acc = torch.cat([torch.zeros_like(acc[:, :2, :]), acc], dim=1)  # -> [N, T, 6]
-                acc = acc / (acc.std(dim=(0, 1), keepdim=True) + 1e-6)     # per-dim scale
-                extra.append(acc)
+                # second difference over the stride: a[t] = x[t] - 2*x[t-2] + x[t-4]
+                acc = pos[:, 4:, :] - 2 * pos[:, 2:-2, :] + pos[:, :-4, :]  # [N, T-4, 6]
+                acc = torch.cat([torch.zeros_like(acc[:, :4, :]), acc], dim=1)  # -> [N, T, 6]
+                if acc_std is None:
+                    acc_std = acc.std(dim=(0, 1), keepdim=True) + 1e-6     # per-dim scale
+                self.acc_std = acc_std
+                extra.append(acc / acc_std.to(acc.device))
             self.data = torch.cat([pos] + extra, dim=2)                   # [N, T, 6/12/18]
         self.time_span = sequence_length * 2
         self.N, self.T, self.D = self.data.shape
@@ -264,12 +277,21 @@ def split_data(
         TimeSeriesDataset(splits["train"][task], train_ids, sequence_length, device, time_augmentation=time_augmentation, neg_augmentation=neg_augmentation, add_velocity=add_velocity, add_acceleration=add_acceleration)
         for task in splits["train"]
     ]
+
+    # Reuse the velocity/acceleration scales computed on the train split for val
+    # and test, so val/test never use their own statistics. One entry per task:
+    # feat_std[task] = (vel_std, acc_std). A test task that wasn't in training
+    # (cross-task) falls back to (None, None) and re-computes its own scale.
+    feat_std = {}
+    for task, ds in zip(splits["train"], train_datasets):
+        feat_std[task] = (ds.vel_std, ds.acc_std)
+
     val_datasets = [
-        TimeSeriesDataset(splits["val"][task], val_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity, add_acceleration=add_acceleration)
+        TimeSeriesDataset(splits["val"][task], val_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity, add_acceleration=add_acceleration, vel_std=feat_std.get(task, (None, None))[0], acc_std=feat_std.get(task, (None, None))[1])
         for task in splits["val"]
     ]
     test_datasets = [
-        TimeSeriesDataset(splits["test"][task], test_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity, add_acceleration=add_acceleration)
+        TimeSeriesDataset(splits["test"][task], test_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity, add_acceleration=add_acceleration, vel_std=feat_std.get(task, (None, None))[0], acc_std=feat_std.get(task, (None, None))[1])
         for task in splits["test"]
     ]
 
@@ -296,4 +318,5 @@ def split_data(
         train_ids,
         val_ids,
         test_ids,
+        feat_std,
     )
