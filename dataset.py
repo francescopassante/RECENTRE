@@ -15,14 +15,14 @@ class TimeSeriesDataset(Dataset):
             data = torch.from_numpy(data)
         self.data = data.to(device=device, dtype=torch.float32)
         if time_augmentation == True:
-            data_rev = data.flip(1)
-            self.data = torch.cat([data, data_rev], dim=0)
+            data_rev = self.data.flip(1)
+            self.data = torch.cat([self.data, data_rev], dim=0)
             self.ids = np.concatenate([ids, ids])
         else:
             self.ids = ids
         if neg_augmentation == True:
-            data_neg = -data
-            self.data = torch.cat([data, data_neg], dim=0)
+            data_neg = -self.data
+            self.data = torch.cat([self.data, data_neg], dim=0)
             self.ids = np.concatenate([self.ids, self.ids])
         self.time_span = sequence_length * 2
         self.N, self.T, self.D = self.data.shape
