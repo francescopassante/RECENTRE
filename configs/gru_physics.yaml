@@ -1,0 +1,34 @@
+# Physics-informed GRU generalist: adds a smoothness (bounded-acceleration)
+# penalty on the predicted trajectory. A head has inertia, so the predicted
+# next frame shouldn't imply a large 2nd difference (acceleration) relative to
+# the last two observed positions. lambda_smooth weights the penalty; 0 = off
+# (identical to gru_generalist). Tune it: too high collapses to constant-velocity
+# extrapolation, too low does nothing. A/B against gru_generalist.yaml.
+output_dir: checkpoints/generalist
+
+model:
+  type: gru          # key in MODELS (models.py); add new architectures there
+  input_dim: 6
+  hidden_dim: 128
+  output_dim: 6
+  num_layers: 2
+  dropout: 0.5
+
+data:
+  train_task: R+M+L
+  test_task: R+M+L   # overlapping tasks -> split_data auto-uses disjoint patients
+  batch_size: 16384
+  split_percentages: [0.7, 0.15, 0.15]
+  cross_patients: false
+  sequence_length: 10   # input window = sequence_length points, stride 2 (spans 2x frames)
+  time_augmentation: false
+  neg_augmentation: false
+
+train:
+  loss: gaussian_nll
+  beta: 0.5
+  lambda_smooth: 0.1   # weight of the physics-informed smoothness penalty (0 = off)
+  epochs: 150
+  patience: 100
+  lr: 1.0e-3
+  weight_decay: 1.0e-4

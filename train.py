@@ -64,6 +64,7 @@ best_state, best_epoch = fit(
     loss=train_config["loss"],
     beta=train_config["beta"],
     patience=train_config["patience"],
+    lambda_smooth=train_config.get("lambda_smooth", 0.0),
 )
 
 # Load the best state
