@@ -16,20 +16,6 @@ def l2sp(model, reference):
     return penalty
 
 
-def smoothness_penalty(mean, x):
-    """Physics-informed smoothness: mean squared acceleration (2nd difference)
-    implied by the predicted next frame and the last two observed positions.
-
-    A head has inertia, so velocity can't change abruptly. Since the mean head
-    predicts a residual (mean = x[-1] + residual), the 2nd difference reduces to
-    `residual - (x[-1] - x[-2])`, i.e. the penalty pulls the predicted step
-    toward the last observed velocity (locally constant velocity = minimum
-    acceleration). Computed on the 6 position channels in normalized space.
-    """
-    accel = mean - 2 * x[:, -1, :6] + x[:, -2, :6]  # [B, 6]
-    return (accel**2).mean()
-
-
 def fit(
     model,
     train_loader,
@@ -45,15 +31,12 @@ def fit(
     patience=10,
     reference=None,
     lambda_l2sp=0.0,
-    lambda_smooth=0.0,
 ):
     """Training loop used for both pretraining and per-patient fine-tuning.
 
     loss is "gaussian_nll" (uses the variance head) or "mse" (uses the mean only).
     Pass a reference state dict + lambda_l2sp > 0 to add the L2-SP penalty
     (fine-tuning); leave them at the defaults to disable it (pretraining).
-    lambda_smooth > 0 adds the physics-informed smoothness (bounded-acceleration)
-    penalty; 0 disables it.
 
     Early stopping and model selection use validation FD-gain.
     Returns (best_state, best_epoch, train_loss_history, val_loss_history).
@@ -92,11 +75,6 @@ def fit(
             fdg = fd_gain(fd_base, fd_pred)
 
             total = base - beta * fdg.mean()
-
-            # physics-informed smoothness: bound the predicted acceleration
-            # (head inertia). Off when lambda_smooth == 0.
-            if lambda_smooth > 0:
-                total = total + lambda_smooth * smoothness_penalty(mean, x)
 
             # add L2SP if finetuning
             if reference is not None and lambda_l2sp > 0:
