@@ -42,8 +42,11 @@ data:
 train:
   loss: gaussian_nll
   beta: 0.5
-  epochs: 150
-  patience: 100
+  # ~1.85 min/epoch compiled, so 150 would be ~4.5h. The comparable GRU (seqlen 64)
+  # peaked at epoch 88, so cap at 100 with real early stopping -> ~3h worst case.
+  # Drop to 90 for a hard sub-3h run, or raise once you know where Mamba peaks.
+  epochs: 100
+  patience: 20
   lr: 1.0e-3
   weight_decay: 1.0e-4
   compile: true   # torch.compile fuses the scan's many tiny kernels -> big speedup
