@@ -1,0 +1,40 @@
+# Generalist Mamba (selective SSM) + velocity features. Mirrors the champion GRU
+# recipe (long context + velocity) so the only real variable is the backbone.
+# Start at sequence_length 64; bump to 128 once the 64 run looks good.
+#
+# NOTE on batch_size: the pure-PyTorch selective scan materializes
+# [B, L, d_inner, d_state] tensors, so memory scales with batch_size * seqlen.
+# 8192 fits comfortably on a 32GB V100 at seqlen 64; drop to 4096 on a 16GB card
+# or if you hit OOM (or lower d_state to 8). On 32GB you can try 16384 for speed.
+output_dir: checkpoints/generalist
+
+model:
+  type: mamba        # key in MODELS (models.py)
+  input_dim: 12      # 6 positions + 6 velocities (add_velocity below)
+  output_dim: 6
+  d_model: 64        # backbone width; ~137k params at num_layers 4 (vs GRU's 172k)
+  num_layers: 4      # stacked pre-norm Mamba blocks
+  d_state: 16        # SSM state size per channel; drop to 8 to save memory
+  d_conv: 4          # depthwise causal conv kernel inside each block
+  expand: 2          # d_inner = expand * d_model
+  dropout: 0.1
+
+data:
+  train_task: R+M+L
+  test_task: R+M+L   # overlapping tasks -> split_data auto-uses disjoint patients
+  batch_size: 8192
+  split_percentages: [0.7, 0.15, 0.15]
+  cross_patients: false
+  sequence_length: 64   # input window = 64 frames, stride 2 (spans 128 frames)
+  time_augmentation: false
+  neg_augmentation: false
+  add_velocity: true       # append first-difference (velocity) channels -> input_dim 12
+  add_acceleration: false
+
+train:
+  loss: gaussian_nll
+  beta: 0.5
+  epochs: 150
+  patience: 100
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
