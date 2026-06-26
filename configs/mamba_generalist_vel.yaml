@@ -2,21 +2,23 @@
 # recipe (long context + velocity) so the only real variable is the backbone.
 # Start at sequence_length 64; bump to 128 once the 64 run looks good.
 #
-# NOTE on memory: the chunked scan materializes several [B, L, d_inner, d_state]
-# tensors per block. The model uses gradient checkpointing (on by default), so
-# only ONE block's activations are held at a time -> peak memory ~ one block, not
-# num_layers blocks. Rough peak at seqlen 64, d_state 16: ~7GB @ batch 2048,
-# ~13GB @ 4096, ~25GB @ 8192. So 4096 is safe on a 16GB V100; use 8192 on 32GB
-# (bigger batch = fewer batches = faster). Halve again with d_state 8 if needed.
+# SPEED/MEMORY: the scan works on [B, L, d_inner, d_state] tensors and is
+# bandwidth-bound on them, so wall-clock scales with d_state * d_inner * num_layers
+# * (samples/epoch). The values below are tuned for speed first (d_state 8,
+# num_layers 3, no neg-aug) -- scale them back up once you confirm it trains in
+# budget and is underfitting. Gradient checkpointing (on by default in the model)
+# holds only ONE block's activations at a time, so peak memory ~ one block: rough
+# peak at seqlen 64, d_state 8 -> ~3.5GB @ 4096, ~7GB @ 8192. 4096 is safe on a
+# 16GB V100; use 8192 on 32GB (bigger batch = fewer batches = a bit faster).
 output_dir: checkpoints/generalist
 
 model:
   type: mamba        # key in MODELS (models.py)
   input_dim: 12      # 6 positions + 6 velocities (add_velocity below)
   output_dim: 6
-  d_model: 64        # backbone width; ~137k params at num_layers 4 (vs GRU's 172k)
-  num_layers: 4      # stacked pre-norm Mamba blocks
-  d_state: 16        # SSM state size per channel; drop to 8 to save memory
+  d_model: 64        # backbone width; ~95k params here (GRU champion is 172k)
+  num_layers: 3      # stacked pre-norm Mamba blocks (4+ if it underfits)
+  d_state: 8         # SSM state size per channel; 8 is plenty for a 6-DOF signal
   d_conv: 4          # depthwise causal conv kernel inside each block
   expand: 2          # d_inner = expand * d_model
   dropout: 0.1
@@ -29,8 +31,8 @@ data:
   cross_patients: false
   sequence_length: 64   # input window = 64 frames, stride 2 (spans 128 frames)
   time_augmentation: false
-  neg_augmentation: true   # mirror -data (head motion ~sign-symmetric); ~2x epoch
-                           # time. Set false for a clean A/B vs the GRU champion.
+  neg_augmentation: false  # mirror -data would ~2x epoch time; enable later if you
+                           # want it (head motion is ~sign-symmetric).
   add_velocity: true       # append first-difference (velocity) channels -> input_dim 12
   add_acceleration: false
 
