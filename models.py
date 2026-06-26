@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.parametrizations import weight_norm
+from torch.utils.checkpoint import checkpoint
 import math
 
 
@@ -843,13 +844,20 @@ class MambaModel(nn.Module):
         d_conv=4,
         expand=2,
         dropout=0.1,
+        use_checkpoint=True,
     ):
         """Selective-SSM backbone with the repo's shared two-head MLP. Same
         prediction contract as the other models: input [B, T, input_dim] ->
         (mean, variance); the mean head predicts a residual added to the last input
         frame, variance is returned exponentiated.
+
+        use_checkpoint recomputes each block's scan in backward instead of storing
+        it -- the chunked scan is cheap to recompute, so this cuts peak activation
+        memory from O(num_layers) big [B,L,d_inner,d_state] tensors to O(1) at a
+        small compute cost. Turn it off only if memory is not a concern.
         """
         super().__init__()
+        self.use_checkpoint = use_checkpoint
         self.input_proj = nn.Linear(input_dim, d_model)
         # pre-norm residual blocks (norm -> mixer -> add)
         self.blocks = nn.ModuleList(
@@ -876,7 +884,13 @@ class MambaModel(nn.Module):
         # x: [B, T, input_dim]
         h = self.input_proj(x)
         for blk in self.blocks:
-            h = h + blk["mixer"](blk["norm"](h))  # pre-norm residual
+            # pre-norm residual; checkpoint the (norm -> mixer) recompute in backward
+            if self.use_checkpoint and self.training:
+                h = h + checkpoint(
+                    lambda t, b=blk: b["mixer"](b["norm"](t)), h, use_reentrant=False
+                )
+            else:
+                h = h + blk["mixer"](blk["norm"](h))
 
         h = self.norm_f(h)
         h = h[:, -1, :]  # last timestep -> [B, d_model]
