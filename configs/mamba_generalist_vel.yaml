@@ -2,14 +2,14 @@
 # recipe (long context + velocity) so the only real variable is the backbone.
 # Start at sequence_length 64; bump to 128 once the 64 run looks good.
 #
-# SPEED/MEMORY: the scan works on [B, L, d_inner, d_state] tensors and is
-# bandwidth-bound on them, so wall-clock scales with d_state * d_inner * num_layers
-# * (samples/epoch). The values below are tuned for speed first (d_state 8,
-# num_layers 3, no neg-aug) -- scale them back up once you confirm it trains in
-# budget and is underfitting. Gradient checkpointing (on by default in the model)
-# holds only ONE block's activations at a time, so peak memory ~ one block: rough
-# peak at seqlen 64, d_state 8 -> ~3.5GB @ 4096, ~7GB @ 8192. 4096 is safe on a
-# 16GB V100; use 8192 on 32GB (bigger batch = fewer batches = a bit faster).
+# SPEED/MEMORY (measured on a 32GB V100, compiled, this config): ~333 ms/batch ->
+# ~90 s/epoch train + ~10 s val, ~22 GB peak at batch 4096. The scan is
+# launch-overhead-bound, so torch.compile (train.compile below) is the big lever
+# (3.5x). After compile it's compute-bound -> DON'T raise batch_size (8192 OOMs a
+# 32GB card and won't speed it up). use_checkpoint is OFF: under compile, inductor
+# plans memory itself, so the explicit checkpoint just added a redundant recompute
+# (it was both slower AND higher memory). The dims (d_state 8, num_layers 3) are
+# speed-first -- scale them back up if it underfits and you have the time budget.
 output_dir: checkpoints/generalist
 
 model:
@@ -22,9 +22,10 @@ model:
   d_conv: 4          # depthwise causal conv kernel inside each block
   expand: 2          # d_inner = expand * d_model
   dropout: 0.1
-  use_checkpoint: true   # recompute each block in backward to save memory; the
-                         # scan is the bottleneck, so try false (with smaller batch)
-                         # if you have VRAM and compile isn't enough
+  use_checkpoint: false  # keep OFF when compile is on (below): inductor handles
+                         # memory, so checkpointing only adds a redundant recompute
+                         # (measured slower AND more memory). Turn ON only if you run
+                         # uncompiled and hit OOM.
 
 data:
   train_task: R+M+L
@@ -42,9 +43,9 @@ data:
 train:
   loss: gaussian_nll
   beta: 0.5
-  # ~1.85 min/epoch compiled, so 150 would be ~4.5h. The comparable GRU (seqlen 64)
-  # peaked at epoch 88, so cap at 100 with real early stopping -> ~3h worst case.
-  # Drop to 90 for a hard sub-3h run, or raise once you know where Mamba peaks.
+  # ~100 s/epoch compiled (checkpoint off). The comparable GRU (seqlen 64) peaked
+  # at epoch 88, so 100 epochs (~2.8h) captures the peak with margin under 3h.
+  # Early stopping (patience 20) ends sooner if val FD-gain plateaus.
   epochs: 100
   patience: 20
   lr: 1.0e-3
