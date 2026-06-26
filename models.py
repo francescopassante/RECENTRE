@@ -717,11 +717,13 @@ class ConformerModel(nn.Module):
 # Length-agnostic (reads the last timestep), so no sequence_length argument, like
 # the GRU/TCN/Transformer/Conformer.
 #
-# The selective scan below is a sequential Python loop over timesteps
-# (mamba-minimal style): correct but launch/memory-bound at long L. For speed,
-# swap it for the fused mamba-ssm CUDA kernel or a chunked parallel scan. The
-# materialized [B, L, d_inner, d_state] tensors dominate memory -- scale batch_size
-# (and optionally d_state) to the GPU.
+# The selective scan is a chunked parallel scan (see MambaBlock._scan): the time
+# axis is cut into ~sqrt(L) chunks, each chunk is scanned in parallel across all
+# chunks, then the chunk-end states are carried sequentially. This drops the
+# sequential depth from L to ~2*sqrt(L) Python steps (e.g. 64 -> ~16) and is
+# numerically exact vs. the naive timestep loop. For even more speed swap in the
+# fused mamba-ssm CUDA kernel. The materialized [B, L, d_inner, d_state] tensors
+# dominate memory -- scale batch_size (and optionally d_state) to the GPU.
 
 
 class MambaBlock(nn.Module):
@@ -750,6 +752,52 @@ class MambaBlock(nn.Module):
         self.D = nn.Parameter(torch.ones(d_inner))
         self.out_proj = nn.Linear(d_inner, d_model, bias=False)
 
+    @staticmethod
+    def _scan(a, b):
+        """Chunked parallel scan of the diagonal recurrence h_t = a_t*h_{t-1}+b_t.
+
+        a, b: [B, L, d_inner, d_state]; returns h with the same shape.
+        Splits L into ~sqrt(L) chunks: each chunk is scanned in parallel across
+        all chunks (the within-chunk loop runs once per chunk, not once per frame),
+        then the chunk-end states are propagated sequentially and injected back.
+        Sequential depth ~ chunk + n_chunks instead of L; exact (no division, so
+        a_t -> 0 from strong selective forgetting is safe).
+        """
+        B, L, Di, Ds = a.shape
+        chunk = max(1, int(round(L**0.5)))
+        pad = (-L) % chunk  # pad time at the end so L is a multiple of chunk
+        if pad:
+            a = F.pad(a, (0, 0, 0, 0, 0, pad), value=1.0)  # a=1 -> identity decay
+            b = F.pad(b, (0, 0, 0, 0, 0, pad), value=0.0)  # b=0 -> no input
+        Lp = L + pad
+        nc = Lp // chunk
+        a = a.view(B, nc, chunk, Di, Ds)
+        b = b.view(B, nc, chunk, Di, Ds)
+
+        # 1) within-chunk from-zero scan, parallel across the nc chunks
+        s = torch.zeros(B, nc, Di, Ds, device=a.device, dtype=a.dtype)
+        hs = []
+        for j in range(chunk):
+            s = a[:, :, j] * s + b[:, :, j]  # [B, nc, Di, Ds]
+            hs.append(s)
+        hloc = torch.stack(hs, dim=2)  # [B, nc, chunk, Di, Ds]
+
+        # 2) inclusive cumprod of a within each chunk -> carry-injection coeffs
+        A_incl = torch.cumprod(a, dim=2)  # [B, nc, chunk, Di, Ds]
+
+        # 3) propagate the chunk-end state across chunks (sequential over nc)
+        A_chunk = A_incl[:, :, -1]  # [B, nc, Di, Ds] total decay per chunk
+        hloc_end = hloc[:, :, -1]  # [B, nc, Di, Ds] chunk-end from-zero state
+        s_ins, carry = [], torch.zeros(B, Di, Ds, device=a.device, dtype=a.dtype)
+        for c in range(nc):
+            s_ins.append(carry)  # state entering chunk c
+            carry = A_chunk[:, c] * carry + hloc_end[:, c]
+        s_in = torch.stack(s_ins, dim=1)  # [B, nc, Di, Ds]
+
+        # 4) inject the incoming carry into every position of each chunk
+        h = A_incl * s_in.unsqueeze(2) + hloc  # [B, nc, chunk, Di, Ds]
+        return h.reshape(B, Lp, Di, Ds)[:, :L]
+
     def ssm(self, x):
         # x: [B, L, d_inner]
         A = -torch.exp(self.A_log)  # [d_inner, d_state]
@@ -765,15 +813,9 @@ class MambaBlock(nn.Module):
             delta.unsqueeze(-1) * Bm.unsqueeze(2) * x.unsqueeze(-1)
         )  # [B, L, d_inner, d_state]
 
-        # sequential scan: h_t = deltaA_t * h_{t-1} + deltaBx_t ; y_t = <h_t, C_t>
-        h = torch.zeros(
-            x.size(0), self.d_inner, self.d_state, device=x.device, dtype=x.dtype
-        )
-        ys = []
-        for t in range(x.size(1)):
-            h = deltaA[:, t] * h + deltaBx[:, t]  # [B, d_inner, d_state]
-            ys.append(torch.einsum("bds,bs->bd", h, Cm[:, t]))  # [B, d_inner]
-        y = torch.stack(ys, dim=1)  # [B, L, d_inner]
+        # chunked parallel scan, then contract the state with C in one vectorized op
+        h = self._scan(deltaA, deltaBx)  # [B, L, d_inner, d_state]
+        y = torch.einsum("blds,bls->bld", h, Cm)  # y_t = <h_t, C_t>
         return y + x * self.D  # skip connection through D
 
     def forward(self, x):
