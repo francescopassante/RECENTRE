@@ -78,11 +78,14 @@ context length and feature set so the only variable is the backbone.
 
 ### Implementation note (pure PyTorch)
 
-The selective scan is implemented as a sequential loop over timesteps
-(`mamba-minimal` style): correct but launch/memory-bound at long L. For a
-production run, swap the loop for the fused `mamba-ssm` CUDA kernel or a chunked
-parallel scan. The materialized `[B, L, d_inner, d_state]` tensors dominate memory
-— scale `batch_size` (and optionally `d_state`) to the GPU.
+The selective scan is a **chunked parallel scan** (`MambaBlock._scan`): the time
+axis is split into ~√L chunks, each chunk is scanned in parallel across all
+chunks, and the chunk-end states are propagated sequentially. This drops the
+sequential depth from `L` to ~`2√L` Python steps (e.g. 64 → ~16) and is
+numerically exact vs. the naive timestep loop (verified to float32 round-off,
+including the `a_t → 0` strong-forgetting path). For even more speed, swap in the
+fused `mamba-ssm` CUDA kernel. The materialized `[B, L, d_inner, d_state]` tensors
+dominate memory — scale `batch_size` (and optionally `d_state`) to the GPU.
 
 ## Secondary, lower-risk option: bidirectional GRU
 
