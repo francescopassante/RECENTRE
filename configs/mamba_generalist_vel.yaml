@@ -2,10 +2,12 @@
 # recipe (long context + velocity) so the only real variable is the backbone.
 # Start at sequence_length 64; bump to 128 once the 64 run looks good.
 #
-# NOTE on batch_size: the pure-PyTorch selective scan materializes
-# [B, L, d_inner, d_state] tensors, so memory scales with batch_size * seqlen.
-# 8192 fits comfortably on a 32GB V100 at seqlen 64; drop to 4096 on a 16GB card
-# or if you hit OOM (or lower d_state to 8). On 32GB you can try 16384 for speed.
+# NOTE on memory: the chunked scan materializes several [B, L, d_inner, d_state]
+# tensors per block. The model uses gradient checkpointing (on by default), so
+# only ONE block's activations are held at a time -> peak memory ~ one block, not
+# num_layers blocks. Rough peak at seqlen 64, d_state 16: ~7GB @ batch 2048,
+# ~13GB @ 4096, ~25GB @ 8192. So 4096 is safe on a 16GB V100; use 8192 on 32GB
+# (bigger batch = fewer batches = faster). Halve again with d_state 8 if needed.
 output_dir: checkpoints/generalist
 
 model:
@@ -22,12 +24,13 @@ model:
 data:
   train_task: R+M+L
   test_task: R+M+L   # overlapping tasks -> split_data auto-uses disjoint patients
-  batch_size: 8192
+  batch_size: 4096   # safe on a 16GB V100 with checkpointing; raise to 8192 on 32GB
   split_percentages: [0.7, 0.15, 0.15]
   cross_patients: false
   sequence_length: 64   # input window = 64 frames, stride 2 (spans 128 frames)
   time_augmentation: false
-  neg_augmentation: false
+  neg_augmentation: true   # mirror -data (head motion ~sign-symmetric); ~2x epoch
+                           # time. Set false for a clean A/B vs the GRU champion.
   add_velocity: true       # append first-difference (velocity) channels -> input_dim 12
   add_acceleration: false
 
