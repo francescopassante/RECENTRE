@@ -61,7 +61,8 @@ def fit(
         # store fd for baseline and model frame by frame
         train_fd_bases = []
         train_fd_preds = []
-        for _, x, y in train_loader:
+        # transient per-batch bar so a slow epoch shows live progress (it/s), not silence
+        for _, x, y in tqdm.tqdm(train_loader, leave=False, desc=f"epoch {epoch + 1}"):
             optimizer.zero_grad()
             x, y = x.to(device), y.to(device)
             mean, var = model(x)

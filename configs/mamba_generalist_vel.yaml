@@ -22,6 +22,9 @@ model:
   d_conv: 4          # depthwise causal conv kernel inside each block
   expand: 2          # d_inner = expand * d_model
   dropout: 0.1
+  use_checkpoint: true   # recompute each block in backward to save memory; the
+                         # scan is the bottleneck, so try false (with smaller batch)
+                         # if you have VRAM and compile isn't enough
 
 data:
   train_task: R+M+L
@@ -43,3 +46,5 @@ train:
   patience: 100
   lr: 1.0e-3
   weight_decay: 1.0e-4
+  compile: true   # torch.compile fuses the scan's many tiny kernels -> big speedup
+                  # for this launch-overhead-bound model. First batch compiles (slow).
