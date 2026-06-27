@@ -31,6 +31,7 @@ def fit(
     patience=10,
     reference=None,
     lambda_l2sp=0.0,
+    verbose=True,
 ):
     """Training loop used for both pretraining and per-patient fine-tuning.
 
@@ -51,7 +52,7 @@ def fit(
     best_epoch = 0
     early_counter = 0
 
-    pbar = tqdm.trange(epochs)
+    pbar = tqdm.trange(epochs, disable=not verbose)
     for epoch in pbar:
         model.train()
         # accumulate sample-weighted loss
@@ -62,7 +63,7 @@ def fit(
         train_fd_bases = []
         train_fd_preds = []
         # transient per-batch bar so a slow epoch shows live progress (it/s), not silence
-        for _, x, y in tqdm.tqdm(train_loader, leave=False, desc=f"epoch {epoch + 1}"):
+        for _, x, y in tqdm.tqdm(train_loader, leave=False, desc=f"epoch {epoch + 1}", disable=not verbose):
             optimizer.zero_grad()
             x, y = x.to(device), y.to(device)
             mean, var = model(x)

@@ -187,6 +187,7 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
         patience=cfg["patience"],
         reference=reference,
         lambda_l2sp=cfg["lambda_l2sp"],
+        verbose=False,
     )
     model.load_state_dict(best_state)
     # keep the full per-frame arrays (not just the scalar summary): these are the
