@@ -158,7 +158,7 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
     model, optimizer, scheduler, reference = build_finetune_model(
         pretrained["model_state"], model_config, cfg, device
     )
-    best_state, best_epoch, _, _ = fit(
+    best_state, best_epoch = fit(
         model,
         loaders["train"],
         loaders["val"],
