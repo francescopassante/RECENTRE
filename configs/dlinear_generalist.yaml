@@ -17,7 +17,7 @@ data:
   cross_patients: false
   sequence_length: 10
   time_augmentation: false
-  neg_augmentation: false
+  neg_augmentation: true
 
 train:
   loss: gaussian_nll

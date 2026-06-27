@@ -14,7 +14,7 @@ output_dir: checkpoints/generalist
 
 model:
   type: mamba        # key in MODELS (models.py)
-  input_dim: 12      # 6 positions + 6 velocities (add_velocity below)
+  input_dim: 18      # 6 positions + 6 velocities + 6 accelerations (add_velocity + add_acceleration below)
   output_dim: 6
   d_model: 64        # backbone width; ~95k params here (GRU champion is 172k)
   num_layers: 3      # stacked pre-norm Mamba blocks (4+ if it underfits)
@@ -30,15 +30,15 @@ model:
 data:
   train_task: R+M+L
   test_task: R+M+L   # overlapping tasks -> split_data auto-uses disjoint patients
-  batch_size: 4096   # safe on a 16GB V100 with checkpointing; raise to 8192 on 32GB
+  batch_size: 2048
   split_percentages: [0.7, 0.15, 0.15]
   cross_patients: false
-  sequence_length: 64   # input window = 64 frames, stride 2 (spans 128 frames)
+  sequence_length: 128   # input window = 128 frames, stride 2 (spans 256 frames)
   time_augmentation: false
-  neg_augmentation: false  # mirror -data would ~2x epoch time; enable later if you
+  neg_augmentation: true  # mirror -data would ~2x epoch time; enable later if you
                            # want it (head motion is ~sign-symmetric).
-  add_velocity: true       # append first-difference (velocity) channels -> input_dim 12
-  add_acceleration: false
+  add_velocity: true       # append first-difference (velocity) channels
+  add_acceleration: true   # append second-difference (acceleration) channels -> input_dim 18
 
 train:
   loss: gaussian_nll

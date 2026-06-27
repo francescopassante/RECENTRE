@@ -3,7 +3,7 @@ output_dir: checkpoints/generalist
 
 model:
   type: gru          # key in MODELS (models.py); add new architectures there
-  input_dim: 6
+  input_dim: 12     # 6 positions + 6 velocities (add_velocity below)
   hidden_dim: 128
   output_dim: 6
   num_layers: 2
@@ -12,12 +12,14 @@ model:
 data:
   train_task: R+M+L
   test_task: R+M+L   # overlapping tasks -> split_data auto-uses disjoint patients
-  batch_size: 16384
+  batch_size: 8192
   split_percentages: [0.7, 0.15, 0.15]
   cross_patients: false
-  sequence_length: 10   # input window = sequence_length frames, stride 2 (spans 2x frames)
+  sequence_length: 128   # input window = sequence_length frames, stride 2 (spans 2x frames)
   time_augmentation: false
-  neg_augmentation: false
+  neg_augmentation: true
+  add_velocity: true       # append first-difference (velocity) channels -> input_dim 12
+  add_acceleration: false
 
 train:
   loss: gaussian_nll

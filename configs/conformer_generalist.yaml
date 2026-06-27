@@ -7,7 +7,7 @@ model:
   type: conformer    # key in MODELS (models.py)
   input_dim: 6
   output_dim: 6
-  d_model: 128
+  d_model: 64
   nhead: 4           # must divide d_model
   num_layers: 2
   ff_expansion: 4    # feed-forward hidden = ff_expansion * d_model
@@ -17,17 +17,17 @@ model:
 data:
   train_task: R+M+L
   test_task: R+M+L   # overlapping tasks -> split_data auto-uses disjoint patients
-  batch_size: 16384
+  batch_size: 8192
   split_percentages: [0.7, 0.15, 0.15]
   cross_patients: false
-  sequence_length: 10   # input window = sequence_length points, stride 2 (spans 2x frames)
+  sequence_length: 128   # input window = sequence_length points, stride 2 (spans 2x frames)
   time_augmentation: false
-  neg_augmentation: false
+  neg_augmentation: true
 
 train:
   loss: gaussian_nll
   beta: 0.5
-  epochs: 150
-  patience: 100
+  epochs: 100
+  patience: 30
   lr: 1.0e-3
   weight_decay: 1.0e-4

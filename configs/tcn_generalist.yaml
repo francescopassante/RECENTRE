@@ -18,7 +18,7 @@ data:
   cross_patients: false   # some patients do more tasks, if false the same patient can appear in train and test but with two diff tasks; if true, patients are disjoint across train and test
   sequence_length: 10     # input window = sequence_length frames, stride 2 (spans 2x frames)
   time_augmentation: false
-  neg_augmentation: false
+  neg_augmentation: true
 
 
 
