@@ -12,6 +12,6 @@ beta: 0.5
 epochs: 30
 patience: 20
 lambda_l2sp: 1.0e-3
-lr_gru: 1.0e-4     # small LR for the GRU recurrent layers
-lr_mlp: 3.0e-4     # larger LR for the final MLP block
+lr_body: 1.0e-4    # small LR for the backbone (here the GRU recurrent layers)
+lr_head: 3.0e-4    # larger LR for the final MLP head
 dropout_ft: 0.05   # reduced dropout — the per-patient set is tiny

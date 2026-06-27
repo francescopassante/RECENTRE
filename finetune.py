@@ -69,8 +69,27 @@ def build_patient_split(
     return loaders, sizes
 
 
+def split_finetune_params(model):
+    """Split params into (body, head) and freeze the variance head.
+
+    Shared convention across gru/tcn/transformer/conformer/mamba: any param with
+    'logvar' is the variance head; the MLP mean head is fc1/bn_fc1/fc_mean;
+    everything else is the backbone. The body trains at the smaller lr_body, the
+    head at the larger lr_head.
+    """
+    body, head = [], []
+    for name, p in model.named_parameters():
+        if "logvar" in name:
+            p.requires_grad = False  # freeze the variance head
+        elif name.startswith(("fc1", "bn_fc1", "fc_mean")):
+            head.append(p)  # MLP head -> lr_head
+        else:
+            body.append(p)  # backbone -> lr_body
+    return body, head
+
+
 def build_finetune_model(pretrained_state, model_config, cfg, device):
-    """Fresh pretrained GRU set up for fine-tuning: frozen variance head, two
+    """Fresh pretrained model set up for fine-tuning: frozen variance head, two
     LR groups, reduced dropout, plus the L2-SP reference snapshot (theta_0)."""
     model = build_model(model_config).to(device)
     model.load_state_dict(pretrained_state)
@@ -80,29 +99,17 @@ def build_finetune_model(pretrained_state, model_config, cfg, device):
         name: param.clone().detach() for name, param in model.named_parameters()
     }
 
-    # Freeze the variance head (train only the other layers)
-    for name, p in model.named_parameters():
-        p.requires_grad = name.startswith(("gru", "bn_gru", "fc1", "bn_fc1", "fc_mean"))
+    body_params, head_params = split_finetune_params(model)
 
     # Reduce dropout during fine-tuning — the per-patient set is tiny
     model.dp.p = cfg["dropout_ft"]
 
-    gru_params = [
-        p
-        for n, p in model.named_parameters()
-        if p.requires_grad and n.startswith(("gru", "bn_gru"))
-    ]
-    mlp_params = [
-        p
-        for n, p in model.named_parameters()
-        if p.requires_grad and n.startswith(("fc1", "bn_fc1", "fc_mean"))
-    ]
     # weight_decay=0: L2-SP already regularizes toward the pretrained weights,
     # so an extra decay toward zero would pull against it.
     optimizer = torch.optim.Adam(
         [
-            {"params": gru_params, "lr": cfg["lr_gru"]},
-            {"params": mlp_params, "lr": cfg["lr_mlp"]},
+            {"params": body_params, "lr": cfg["lr_body"]},
+            {"params": head_params, "lr": cfg["lr_head"]},
         ],
         weight_decay=0.0,
     )
@@ -113,7 +120,7 @@ def build_finetune_model(pretrained_state, model_config, cfg, device):
 
 
 def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
-    """Fine-tune the pretrained GRU on one patient and compare before/after.
+    """Fine-tune the pretrained model on one patient and compare before/after.
 
     Trains on the early part of the patient's series, selects the best model on
     the middle part, and reports metrics on the later part — for both the
