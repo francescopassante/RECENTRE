@@ -113,6 +113,7 @@ for fname in ckpt_files:
     rows.append(
         {
             "label": label,
+            "fname": fname,
             "seq_len": seq_len,
             "mean_fd_pred": fd_pred.mean(),
             "mean_fd_base": fd_base.mean(),
@@ -129,11 +130,11 @@ rows.sort(key=lambda r: -r["mean_fdg"])
 
 header = (
     f"| {'Model':<15} | {'Key Config':<45} | {'SeqLen':>6} | {'Params':>7} | {'Epoch':>5} "
-    f"| {'FD_pred':>7} | {'FD_base':>7} | {'FD_gain':>7} | {'%>0':>5} |"
+    f"| {'FD_pred':>7} | {'FD_base':>7} | {'FD_gain':>7} | {'%>0':>5} | {'Checkpoint':<50} |"
 )
 sep = (
     f"|{'-' * 17}|{'-' * 47}|{'-' * 8}:|{'-' * 9}:|{'-' * 7}:"
-    f"|{'-' * 9}:|{'-' * 9}:|{'-' * 9}:|{'-' * 7}:|"
+    f"|{'-' * 9}:|{'-' * 9}:|{'-' * 9}:|{'-' * 7}:|{'-' * 52}|"
 )
 print(f"\n{header}")
 print(sep)
@@ -144,5 +145,5 @@ for r in rows:
         key_cfg = r["label"].split(" (", 1)[1][:-1]
     print(
         f"| {mtype:<15} | {key_cfg:<45} | {r['seq_len']:>6} | {r['n_params']:>7,} | {r['best_epoch']:>5} "
-        f"| {r['mean_fd_pred']:>7.4f} | {r['mean_fd_base']:>7.4f} | {r['mean_fdg']:>7.4f} | {r['pct_positive']:>5.1f}% |"
+        f"| {r['mean_fd_pred']:>7.4f} | {r['mean_fd_base']:>7.4f} | {r['mean_fdg']:>7.4f} | {r['pct_positive']:>5.1f}% | {r['fname']:<50} |"
     )
