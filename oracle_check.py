@@ -1,6 +1,6 @@
 """Per-frame ensemble oracle check.
 
-Picks the best transformer, best TCN and best GRU in generalist/ (by mean
+Picks the best transformer, best TCN and best GRU in checkpoints/generalist/ (by mean
 FD_gain, same ranking analyze_checkpoints.py uses), then asks: if an
 *oracle* router could pick the best of the three for every single frame,
 how much would FD_gain improve over the best single model?
@@ -19,7 +19,7 @@ from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
 from metrics import fd
 from models import build_model, get_device
 
-CKPT_DIR = "generalist"
+CKPT_DIR = "checkpoints/generalist"
 device = get_device()
 
 

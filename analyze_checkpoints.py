@@ -1,4 +1,4 @@
-"""Temporary script: load all checkpoints in generalist/ and print a comparison table."""
+"""Temporary script: load all checkpoints in checkpoints/generalist/ and print a comparison table."""
 
 import os
 import numpy as np
@@ -9,7 +9,7 @@ from dataset import TimeSeriesDataset, GPUBatchLoader, parse_task
 from metrics import evaluate
 from models import build_model, get_device
 
-CKPT_DIR = "generalist"
+CKPT_DIR = "checkpoints/generalist"
 # device = get_device()
 device = "cpu"
 

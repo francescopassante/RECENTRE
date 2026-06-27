@@ -1,4 +1,4 @@
-"""Differentiable soft router over the best transformer / GRU / TCN.
+"""Differentiable soft router over the best mamba / conformer / GRU.
 
 The three frozen experts (best of each type by mean FD_gain, see
 oracle_check.py) plus the previous-frame baseline form 4 routable options.
@@ -20,15 +20,12 @@ from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
 from models import build_model, get_device
 
 # best of each model family (by mean FD_gain, from oracle_check.py).
-# Strong families first so indices 0,1,2 are transformer/gru/tcn (used by the
+# Strong families first so indices 0,1,2 are mamba/conformer/gru (used by the
 # fixed-average controls below).
 EXPERTS = {
-    "transformer": "generalist/transformer_R+M+LvR+M+L_beta0.5_ep150_5.pth",
-    "gru": "generalist/gru_R+M+LvR+M+L_beta0.5_ep150_2.pth",
-    "tcn": "generalist/tcn_R+M+LvR+M+L_beta0.5_ep150.pth",
-    "tsmixer": "generalist/TSMixer_R+M+LvR+M+L_beta0.5_ep150_3.pth",
-    "patchtst": "generalist/patchTST_R+M+LvR+M+L_beta0.5_ep150.pth",
-    "dlinear": "generalist/dlinear_R+M+LvR+M+L_beta0.5_ep150_2.pth",
+    "mamba": "checkpoints/generalist/mamba_R+M+LvR+M+L_beta0.5_ep100_5.pth",
+    "conformer": "checkpoints/generalist/conformer_R+M+LvR+M+L_beta0.5_ep100.pth",
+    "gru": "checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep150_5.pth",
 }
 
 device = get_device()
