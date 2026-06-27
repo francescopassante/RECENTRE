@@ -107,16 +107,6 @@ if __name__ == "__main__":
         plt.scatter(
             fdg_before[m], delta[m], s=18, alpha=0.6, color=TASK_COLORS[t], label=t
         )
-    # overall moving-average trend across all tasks: sort by pretrained FD-gain,
-    # then average ΔFD-gain in a centered window at every point. Windows are
-    # truncated at the ends so the line spans the full x-range.
-    order = np.argsort(fdg_before)
-    xs, ys = fdg_before[order], delta[order]
-    w = max(5, len(xs) // 20)
-    if len(xs) >= 2:
-        h = w // 2
-        ys_ma = np.array([ys[max(0, i - h) : i + h + 1].mean() for i in range(len(ys))])
-        plt.plot(xs, ys_ma, color="black", lw=2, label=f"moving avg (w={w})")
     plt.axhline(0, color="k", lw=1)
     plt.xlabel("FD-gain pretrained")
     plt.ylabel("ΔFD-gain (fine-tuned − pretrained)")
