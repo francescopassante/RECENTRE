@@ -248,9 +248,9 @@ if __name__ == "__main__":
             "task",
         )
     }
-    for task in parse_task(cfg["tasks"]):
+    for task in tqdm.tqdm(parse_task(cfg["tasks"]), desc="tasks"):
         task_dict = task_dicts[task]
-        for patient_id in tqdm.tqdm(test_ids, desc=f"fine-tuning ({task})"):
+        for patient_id in test_ids:
             row, after_out = finetune_patient(
                 patient_id, task, pretrained, task_dicts, cfg, device
             )
