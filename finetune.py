@@ -55,6 +55,20 @@ def build_patient_split(
     train_len = int(round(train_frac * total_len))
     val_len = int(round(val_frac * total_len))
 
+    time_span = sequence_length * 2
+    split_lengths = {
+        "train": train_len,
+        "val": val_len,
+        "test": total_len - train_len - val_len,
+    }
+    too_short = [n for n, l in split_lengths.items() if l < time_span]
+    if too_short:
+        raise ValueError(
+            f"Patient {patient_id}: splits {too_short} are shorter than "
+            f"time_span={time_span} (sequence_length={sequence_length}×2). "
+            f"Total frames={total_len}, split lengths={split_lengths}."
+        )
+
     raw_splits = {
         "train": (series_norm[:train_len], True),
         "val": (series_norm[train_len : train_len + val_len], False),
