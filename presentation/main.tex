@@ -63,7 +63,7 @@ We build on their findings (no substantial difference in performance among the d
     \label{fig:patient_timeseries}
 \end{figure}
 
-A subsequent analysis on physics-inspired models has shown that exploiting additional kinematic data such as velocity and acceleration parameters substantially improved test performances. So, 6 additional columns (already present in the raw dataset) containing velocity parameters for the 6 different dimensions are kept and used (the previous work discarded this data).
+A subsequent analysis on physics-informed models has shown that exploiting additional kinematic data such as velocity and acceleration parameters substantially improved test performances. So, 6 additional columns containing velocity parameters and 6 columns containing acceleration parameters for the 6 different dimensions are kept and used.
 
 
 \subsection{Data augmentation}
@@ -122,7 +122,7 @@ Another useful metric is the percentage of frames that is improved (i.e. lower f
 
 We use the same form of the loss function as the original work:
 \begin{equation}
-    L = L_{NLL} + \beta FD_{gain}
+    L = L_{NLL} - \beta FD_{gain}
 \end{equation}
 
 Where $L_{NLL}$ is the gaussian negative log likelihood term that is needed for both prediction accuracy and uncertainty calibration.
@@ -318,7 +318,39 @@ The first new model we implemented is a temporal convolutional network (TCN). Th
     \label{fig:tcn_diagram}
 \end{figure}
 
-The TCN model showed remarkable performances, competitive with the original GRU architecture. 
+The TCN model showed remarkable performances, competitive with the original GRU architecture.
+
+
+\subsection{Routing over experts}
+
+Having trained several architectures, we asked whether they can be \emph{combined} rather than chosen between. The three strongest generalist models --- the best mamba, conformer and GRU --- make different errors on different frames, so a model that picks the right one frame-by-frame could in principle beat any single architecture. To quantify this, we first compute an \emph{oracle} upper bound: a clairvoyant router that, knowing the true target, selects on every frame the expert with the lowest framewise displacement (optionally also falling back to the previous-frame baseline). The oracle is not realizable --- it cheats by using the ground truth --- but it measures the headroom available to any routing scheme.
+
+We then train a realizable router: a small MLP that, from \emph{observable} features only (the experts' mutual disagreement, their predicted uncertainties $\sigma$, and the recent motion), outputs per-frame softmax weights over the three experts plus the previous-frame baseline. The blended prediction is trained end-to-end to directly minimize FD --- the true objective --- with the three experts kept frozen. The router is trained on the validation patients and evaluated on the held-out test patients, both unseen by every expert. Results are reported in Table~(\ref{tab:router}).
+
+\begin{table}[ht]
+\centering
+\caption{Per-frame routing over the three strongest experts (mamba, conformer, GRU) plus the previous-frame baseline. Mean FD\textsubscript{gain} averages per frame; aggregate pools FD over all frames before taking the gain. Oracle rows are the (non-realizable) clairvoyant upper bound.}
+\label{tab:router}
+\small
+\begin{tabular}{l c c}
+\toprule
+Policy & mean FD\textsubscript{gain} & aggregate \\
+\midrule
+mamba (best single)        & 0.199 & 0.270 \\
+conformer (best single)    & 0.211 & 0.279 \\
+GRU (best single)          & 0.193 & 0.263 \\
+\midrule
+Oracle best-of-3           & 0.296 & 0.346 \\
+Oracle best-of-3 + base    & 0.349 & 0.368 \\
+\midrule
+Fixed mean of 3 experts    & 0.217 & 0.281 \\
+\textbf{Soft router}       & \textbf{0.221} & \textbf{0.289} \\
+Hard router (argmax)       & 0.214 & 0.288 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The learned soft router (aggregate $0.289$) beats both the best single model (conformer, $0.279$) and a static equal-weight average of the three experts ($0.281$), confirming that per-frame weighting extracts a small but real gain. However, it captures only $\sim 11\%$ of the oracle headroom: the clairvoyant ceiling ($0.368$) lies far above. The large oracle gap confirms that the experts are genuinely diverse --- they win on different frames --- but the realizable router cannot tell \emph{which} expert will win from the observable features, as that choice is largely driven by unpredictable per-frame noise. Inspecting the learned weights (conformer $56\%$, GRU $30\%$, mamba $13\%$, baseline $1\%$) shows the router behaves close to a static weighted average rather than a sharp per-frame switcher. We therefore regard the single best architecture, or a fixed ensemble, as the practical recommendation, with per-frame routing offering only marginal improvement.
 
 
 \section{Discussion}
