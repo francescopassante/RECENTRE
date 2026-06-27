@@ -7,7 +7,7 @@ import torch
 import tqdm
 from torch.utils.data import DataLoader
 
-from dataset import TimeSeriesDataset
+from dataset import TimeSeriesDataset, parse_task
 from engine import fit
 from metrics import evaluate
 from models import build_model, get_device
