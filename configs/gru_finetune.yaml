@@ -2,7 +2,7 @@
 # The model architecture is read from the pretrained checkpoint, so it is not
 # repeated here — only the fine-tuning knobs live below.
 pretrained: checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep150.pth
-tasks: [R, M, L]
+tasks: R+M+L
 
 sequence_length: 10
 batch_size: 16384

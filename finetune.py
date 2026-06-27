@@ -225,7 +225,7 @@ if __name__ == "__main__":
 
     results_dir = "results/finetune"
     os.makedirs(results_dir, exist_ok=True)
-    tag = "+".join(cfg["tasks"])
+    tag = cfg["tasks"]
     csv_path = os.path.join(results_dir, f"ft_{tag}_before_after.csv")
     npz_path = os.path.join(results_dir, f"ft_{tag}_arrays.npz")
 
@@ -248,7 +248,7 @@ if __name__ == "__main__":
             "task",
         )
     }
-    for task in cfg["tasks"]:
+    for task in parse_task(cfg["tasks"]):
         task_dict = task_dicts[task]
         for patient_id in tqdm.tqdm(test_ids, desc=f"fine-tuning ({task})"):
             row, after_out = finetune_patient(
