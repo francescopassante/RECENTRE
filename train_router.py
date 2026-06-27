@@ -130,10 +130,10 @@ def fd_t(pred, y):
 
 
 print("extracting val (router-train) and test (router-eval) frames...")
-Xtr, Etr, ytr, btr, opt_names = build_frames(torch.load(
-    EXPERTS["transformer"], map_location="cpu", weights_only=False)["val_ids"])
-Xte, Ete, yte, bte, _ = build_frames(torch.load(
-    EXPERTS["transformer"], map_location="cpu", weights_only=False)["test_ids"])
+# any expert works: all share the same seeded R+M+L split
+split_ckpt = torch.load(next(iter(EXPERTS.values())), map_location="cpu", weights_only=False)
+Xtr, Etr, ytr, btr, opt_names = build_frames(split_ckpt["val_ids"])
+Xte, Ete, yte, bte, _ = build_frames(split_ckpt["test_ids"])
 K = Etr.shape[1]
 print(f"  val {len(ytr):,} frames, test {len(yte):,} frames, {K} routable options: {opt_names}")
 
