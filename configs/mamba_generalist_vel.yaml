@@ -1,0 +1,54 @@
+# Generalist Mamba (selective SSM) + velocity features. Mirrors the champion GRU
+# recipe (long context + velocity) so the only real variable is the backbone.
+# Start at sequence_length 64; bump to 128 once the 64 run looks good.
+#
+# SPEED/MEMORY (measured on a 32GB V100, compiled, this config): ~333 ms/batch ->
+# ~90 s/epoch train + ~10 s val, ~22 GB peak at batch 4096. The scan is
+# launch-overhead-bound, so torch.compile (train.compile below) is the big lever
+# (3.5x). After compile it's compute-bound -> DON'T raise batch_size (8192 OOMs a
+# 32GB card and won't speed it up). use_checkpoint is OFF: under compile, inductor
+# plans memory itself, so the explicit checkpoint just added a redundant recompute
+# (it was both slower AND higher memory). The dims (d_state 8, num_layers 3) are
+# speed-first -- scale them back up if it underfits and you have the time budget.
+output_dir: checkpoints/generalist
+
+model:
+  type: mamba        # key in MODELS (models.py)
+  input_dim: 12      # 6 positions + 6 velocities (add_velocity below)
+  output_dim: 6
+  d_model: 64        # backbone width; ~95k params here (GRU champion is 172k)
+  num_layers: 3      # stacked pre-norm Mamba blocks (4+ if it underfits)
+  d_state: 8         # SSM state size per channel; 8 is plenty for a 6-DOF signal
+  d_conv: 4          # depthwise causal conv kernel inside each block
+  expand: 2          # d_inner = expand * d_model
+  dropout: 0.1
+  use_checkpoint: false  # keep OFF when compile is on (below): inductor handles
+                         # memory, so checkpointing only adds a redundant recompute
+                         # (measured slower AND more memory). Turn ON only if you run
+                         # uncompiled and hit OOM.
+
+data:
+  train_task: R+M+L
+  test_task: R+M+L   # overlapping tasks -> split_data auto-uses disjoint patients
+  batch_size: 4096   # safe on a 16GB V100 with checkpointing; raise to 8192 on 32GB
+  split_percentages: [0.7, 0.15, 0.15]
+  cross_patients: false
+  sequence_length: 64   # input window = 64 frames, stride 2 (spans 128 frames)
+  time_augmentation: false
+  neg_augmentation: false  # mirror -data would ~2x epoch time; enable later if you
+                           # want it (head motion is ~sign-symmetric).
+  add_velocity: true       # append first-difference (velocity) channels -> input_dim 12
+  add_acceleration: false
+
+train:
+  loss: gaussian_nll
+  beta: 0.5
+  # ~100 s/epoch compiled (checkpoint off). The comparable GRU (seqlen 64) peaked
+  # at epoch 88, so 100 epochs (~2.8h) captures the peak with margin under 3h.
+  # Early stopping (patience 20) ends sooner if val FD-gain plateaus.
+  epochs: 100
+  patience: 20
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  compile: true   # torch.compile fuses the scan's many tiny kernels -> big speedup
+                  # for this launch-overhead-bound model. First batch compiles (slow).

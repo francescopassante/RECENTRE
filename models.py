@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.parametrizations import weight_norm
+from torch.utils.checkpoint import checkpoint
 import math
 
 
@@ -708,6 +709,185 @@ class ConformerModel(nn.Module):
         return (x[:, -1, :6] + y_mean), y_logvar.exp()
 
 
+# ---- Mamba: selective state-space model (Gu & Dao 2023, arXiv 2312.00752).
+# Input-dependent diagonal SSM with a short depthwise causal conv; linear-time
+# long context with recurrent inductive bias. Pure-PyTorch chunked parallel scan.
+
+
+class MambaBlock(nn.Module):
+    """One Mamba mixer: input projection + gate, depthwise causal conv, then an
+    input-dependent diagonal SSM scan, gated by SiLU(z) and projected back."""
+
+    def __init__(self, d_model, d_state=16, d_conv=4, expand=2):
+        super().__init__()
+        d_inner = expand * d_model
+        self.d_inner = d_inner
+        self.d_state = d_state
+        self.dt_rank = math.ceil(d_model / 16)
+
+        # project to the SSM branch x and the gate branch z (concatenated)
+        self.in_proj = nn.Linear(d_model, 2 * d_inner, bias=False)
+        # depthwise causal conv over time (groups=d_inner -> one filter per channel)
+        self.conv1d = nn.Conv1d(
+            d_inner, d_inner, d_conv, groups=d_inner, padding=d_conv - 1
+        )
+        # produce the input-dependent (selective) Delta, B, C from x
+        self.x_proj = nn.Linear(d_inner, self.dt_rank + 2 * d_state, bias=False)
+        self.dt_proj = nn.Linear(self.dt_rank, d_inner)  # Delta = softplus(dt_proj(.))
+        # diagonal state matrix A (negative), stored in log space; D is the skip term
+        A = torch.arange(1, d_state + 1, dtype=torch.float).repeat(d_inner, 1)
+        self.A_log = nn.Parameter(torch.log(A))  # [d_inner, d_state]
+        self.D = nn.Parameter(torch.ones(d_inner))
+        self.out_proj = nn.Linear(d_inner, d_model, bias=False)
+
+    @staticmethod
+    def _scan(a, b):
+        """Chunked parallel scan: h_t = a_t*h_{t-1}+b_t over [B,L,d_inner,d_state].
+        Splits L into ~sqrt(L) chunks to reduce sequential depth from L to ~2*sqrt(L)."""
+        B, L, Di, Ds = a.shape
+        chunk = max(1, int(round(L**0.5)))
+        pad = (-L) % chunk  # pad time at the end so L is a multiple of chunk
+        if pad:
+            a = F.pad(a, (0, 0, 0, 0, 0, pad), value=1.0)  # a=1 -> identity decay
+            b = F.pad(b, (0, 0, 0, 0, 0, pad), value=0.0)  # b=0 -> no input
+        Lp = L + pad
+        nc = Lp // chunk
+        a = a.view(B, nc, chunk, Di, Ds)
+        b = b.view(B, nc, chunk, Di, Ds)
+
+        # 1) within-chunk from-zero scan, parallel across the nc chunks
+        s = torch.zeros(B, nc, Di, Ds, device=a.device, dtype=a.dtype)
+        hs = []
+        for j in range(chunk):
+            s = a[:, :, j] * s + b[:, :, j]  # [B, nc, Di, Ds]
+            hs.append(s)
+        hloc = torch.stack(hs, dim=2)  # [B, nc, chunk, Di, Ds]
+
+        # 2) inclusive cumprod of a within each chunk -> carry-injection coeffs
+        A_incl = torch.cumprod(a, dim=2)  # [B, nc, chunk, Di, Ds]
+
+        # 3) propagate the chunk-end state across chunks (sequential over nc)
+        A_chunk = A_incl[:, :, -1]  # [B, nc, Di, Ds] total decay per chunk
+        hloc_end = hloc[:, :, -1]  # [B, nc, Di, Ds] chunk-end from-zero state
+        s_ins, carry = [], torch.zeros(B, Di, Ds, device=a.device, dtype=a.dtype)
+        for c in range(nc):
+            s_ins.append(carry)  # state entering chunk c
+            carry = A_chunk[:, c] * carry + hloc_end[:, c]
+        s_in = torch.stack(s_ins, dim=1)  # [B, nc, Di, Ds]
+
+        # 4) inject the incoming carry into every position of each chunk
+        h = A_incl * s_in.unsqueeze(2) + hloc  # [B, nc, chunk, Di, Ds]
+        return h.reshape(B, Lp, Di, Ds)[:, :L]
+
+    def ssm(self, x):
+        # x: [B, L, d_inner]
+        A = -torch.exp(self.A_log)  # [d_inner, d_state]
+        deltaBC = self.x_proj(x)  # [B, L, dt_rank + 2*d_state]
+        delta, Bm, Cm = torch.split(
+            deltaBC, [self.dt_rank, self.d_state, self.d_state], dim=-1
+        )
+        delta = F.softplus(self.dt_proj(delta))  # [B, L, d_inner], > 0
+
+        # zero-order-hold discretization of the diagonal SSM
+        deltaA = torch.exp(delta.unsqueeze(-1) * A)  # [B, L, d_inner, d_state]
+        deltaBx = (
+            delta.unsqueeze(-1) * Bm.unsqueeze(2) * x.unsqueeze(-1)
+        )  # [B, L, d_inner, d_state]
+
+        # chunked parallel scan, then contract the state with C in one vectorized op
+        h = self._scan(deltaA, deltaBx)  # [B, L, d_inner, d_state]
+        y = torch.einsum("blds,bls->bld", h, Cm)  # y_t = <h_t, C_t>
+        return y + x * self.D  # skip connection through D
+
+    def forward(self, x):
+        # x: [B, L, d_model]
+        L = x.size(1)
+        x_in, z = self.in_proj(x).chunk(2, dim=-1)  # each [B, L, d_inner]
+
+        # depthwise causal conv: drop the right padding so step t sees only <= t
+        x_in = self.conv1d(x_in.transpose(1, 2))[..., :L].transpose(1, 2)
+        x_in = F.silu(x_in)
+
+        y = self.ssm(x_in)  # [B, L, d_inner]
+        y = y * F.silu(z)  # gated output
+        return self.out_proj(y)  # [B, L, d_model]
+
+
+class MambaModel(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        d_model=64,
+        num_layers=4,
+        d_state=16,
+        d_conv=4,
+        expand=2,
+        dropout=0.1,
+        use_checkpoint=True,
+    ):
+        """Selective-SSM backbone with the repo's shared two-head MLP. Same
+        prediction contract as the other models: input [B, T, input_dim] ->
+        (mean, variance); the mean head predicts a residual added to the last input
+        frame, variance is returned exponentiated.
+
+        use_checkpoint recomputes each block's scan in backward instead of storing
+        it -- the chunked scan is cheap to recompute, so this cuts peak activation
+        memory from O(num_layers) big [B,L,d_inner,d_state] tensors to O(1) at a
+        small compute cost. Turn it off only if memory is not a concern.
+        """
+        super().__init__()
+        self.use_checkpoint = use_checkpoint
+        self.input_proj = nn.Linear(input_dim, d_model)
+        # pre-norm residual blocks (norm -> mixer -> add)
+        self.blocks = nn.ModuleList(
+            nn.ModuleDict(
+                {
+                    "norm": nn.LayerNorm(d_model),
+                    "mixer": MambaBlock(d_model, d_state, d_conv, expand),
+                }
+            )
+            for _ in range(num_layers)
+        )
+        self.norm_f = nn.LayerNorm(d_model)
+
+        # same head as the other architectures (names kept identical on purpose:
+        # fine-tuning freezes fc_logvar and groups fc1/bn_fc1/fc_mean as the head)
+        self.fc1 = nn.Linear(d_model, d_model)
+        self.bn_fc1 = nn.LayerNorm(d_model)
+        self.fc_mean = nn.Linear(d_model, output_dim)
+        self.fc_logvar = nn.Linear(d_model, output_dim)
+        self.relu = nn.ReLU()
+        self.dp = nn.Dropout(p=dropout)
+
+    def forward(self, x):
+        # x: [B, T, input_dim]
+        h = self.input_proj(x)
+        for blk in self.blocks:
+            # pre-norm residual; checkpoint the (norm -> mixer) recompute in backward
+            if self.use_checkpoint and self.training:
+                h = h + checkpoint(
+                    lambda t, b=blk: b["mixer"](b["norm"](t)), h, use_reentrant=False
+                )
+            else:
+                h = h + blk["mixer"](blk["norm"](h))
+
+        h = self.norm_f(h)
+        h = h[:, -1, :]  # last timestep -> [B, d_model]
+        h = self.fc1(h)
+        h = self.bn_fc1(h)
+        h = self.relu(h)
+        h = self.dp(h)
+
+        y_mean = self.fc_mean(h)
+        # clamp logvar before exp for stability (same guard as patchtst/tsmixer)
+        y_logvar = self.fc_logvar(h).clamp(-10.0, 10.0)
+
+        # the mean head predicts a residual added to the last input frame;
+        # variance is returned already exponentiated (do not exp again in callers)
+        return (x[:, -1, :6] + y_mean), y_logvar.exp()
+
+
 # Add a new architecture by writing its class above and giving it a name here.
 MODELS = {
     "gru": GRUModel,
@@ -718,6 +898,7 @@ MODELS = {
     "dlinear": DLinear,
     "nlinear": NLinear,
     "conformer": ConformerModel,
+    "mamba": MambaModel,
 }
 
 

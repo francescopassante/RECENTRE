@@ -43,6 +43,18 @@ train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids, 
 model = build_model(model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"model: {model_config['type']}  |  trainable params: {n_params:,}")
+
+# Optional torch.compile (train.compile: true). In-place compile keeps the
+# state_dict keys unchanged, so the saved checkpoint still loads in evaluate.py
+# with a plain build_model(). Big win for launch-overhead-bound models (e.g. the
+# Mamba scan). Falls back to eager if compile is unavailable/unsupported.
+if train_config.get("compile", False):
+    try:
+        model.compile()
+        print("torch.compile: enabled (first batch will be slow while it compiles)")
+    except Exception as e:
+        print(f"torch.compile unavailable ({e}); continuing uncompiled")
+
 optimizer = torch.optim.AdamW(
     model.parameters(), lr=train_config["lr"], weight_decay=train_config["weight_decay"]
 )
