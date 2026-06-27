@@ -710,21 +710,8 @@ class ConformerModel(nn.Module):
 
 
 # ---- Mamba: selective state-space model (Gu & Dao 2023, arXiv 2312.00752).
-# A linear recurrence (diagonal SSM) whose parameters (Delta, B, C) are produced
-# from the input -- "selective", so the state can keep long-range context yet
-# focus on the predictive recent dynamics. A short depthwise causal conv inside
-# each block captures local motion spikes (like the TCN/Conformer conv) before the
-# scan. Recurrence's inductive bias (which wins here) + linear-time long context.
-# Length-agnostic (reads the last timestep), so no sequence_length argument, like
-# the GRU/TCN/Transformer/Conformer.
-#
-# The selective scan is a chunked parallel scan (see MambaBlock._scan): the time
-# axis is cut into ~sqrt(L) chunks, each chunk is scanned in parallel across all
-# chunks, then the chunk-end states are carried sequentially. This drops the
-# sequential depth from L to ~2*sqrt(L) Python steps (e.g. 64 -> ~16) and is
-# numerically exact vs. the naive timestep loop. For even more speed swap in the
-# fused mamba-ssm CUDA kernel. The materialized [B, L, d_inner, d_state] tensors
-# dominate memory -- scale batch_size (and optionally d_state) to the GPU.
+# Input-dependent diagonal SSM with a short depthwise causal conv; linear-time
+# long context with recurrent inductive bias. Pure-PyTorch chunked parallel scan.
 
 
 class MambaBlock(nn.Module):
@@ -755,15 +742,8 @@ class MambaBlock(nn.Module):
 
     @staticmethod
     def _scan(a, b):
-        """Chunked parallel scan of the diagonal recurrence h_t = a_t*h_{t-1}+b_t.
-
-        a, b: [B, L, d_inner, d_state]; returns h with the same shape.
-        Splits L into ~sqrt(L) chunks: each chunk is scanned in parallel across
-        all chunks (the within-chunk loop runs once per chunk, not once per frame),
-        then the chunk-end states are propagated sequentially and injected back.
-        Sequential depth ~ chunk + n_chunks instead of L; exact (no division, so
-        a_t -> 0 from strong selective forgetting is safe).
-        """
+        """Chunked parallel scan: h_t = a_t*h_{t-1}+b_t over [B,L,d_inner,d_state].
+        Splits L into ~sqrt(L) chunks to reduce sequential depth from L to ~2*sqrt(L)."""
         B, L, Di, Ds = a.shape
         chunk = max(1, int(round(L**0.5)))
         pad = (-L) % chunk  # pad time at the end so L is a multiple of chunk
