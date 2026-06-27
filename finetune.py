@@ -42,7 +42,8 @@ def summarize(out, sigma):
 
 
 def build_patient_split(
-    series_norm, patient_id, sequence_length, batch_size, split_percentages, device
+    series_norm, patient_id, sequence_length, batch_size, split_percentages, device,
+    add_velocity=False, add_acceleration=False,
 ):
     """Chronological train/val/test split of one patient's normalized series.
 
@@ -54,16 +55,22 @@ def build_patient_split(
     train_len = int(round(train_frac * total_len))
     val_len = int(round(val_frac * total_len))
 
-    splits = {
+    raw_splits = {
         "train": (series_norm[:train_len], True),
         "val": (series_norm[train_len : train_len + val_len], False),
         "test": (series_norm[train_len + val_len :], False),
     }
     loaders, sizes = {}, {}
-    for name, (s, shuffle) in splits.items():
+    vel_std = acc_std = None
+    for name, (s, shuffle) in raw_splits.items():
         ds = TimeSeriesDataset(
-            s[None, :, :], [patient_id], sequence_length=sequence_length, device=device
+            s[None, :, :], [patient_id], sequence_length=sequence_length, device=device,
+            add_velocity=add_velocity, add_acceleration=add_acceleration,
+            vel_std=vel_std, acc_std=acc_std,
         )
+        # propagate scales computed on train to val/test so they match
+        if name == "train":
+            vel_std, acc_std = ds.vel_std, ds.acc_std
         loaders[name] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
         sizes[name] = len(ds)
     return loaders, sizes
@@ -127,17 +134,19 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
     pretrained generalist ("before") and the fine-tuned model ("after").
     """
     model_config = pretrained["config"]["model"]
+    data_config = pretrained["config"]["data"]
     mu, sigma = pretrained["mu"], pretrained["sigma"]
 
     # normalize with the pretraining-population stats (no per-patient leakage)
     series = (task_dicts[task][patient_id] - mu) / sigma
-    # the window length must match what the checkpoint was trained with; the
-    # checkpoint's own config wins over the finetune config to avoid a mismatch
-    seq_len = pretrained["config"]["data"].get(
-        "sequence_length", cfg.get("sequence_length", 10)
-    )
+    # window length and feature flags must match what the checkpoint was trained
+    # with; the checkpoint's own config wins over the finetune config
+    seq_len = data_config.get("sequence_length", cfg.get("sequence_length", 10))
+    add_velocity = data_config.get("add_velocity", False)
+    add_acceleration = data_config.get("add_acceleration", False)
     loaders, sizes = build_patient_split(
-        series, patient_id, seq_len, cfg["batch_size"], cfg["split_percentages"], device
+        series, patient_id, seq_len, cfg["batch_size"], cfg["split_percentages"], device,
+        add_velocity=add_velocity, add_acceleration=add_acceleration,
     )
 
     # BEFORE: the pretrained generalist on this patient's test split
