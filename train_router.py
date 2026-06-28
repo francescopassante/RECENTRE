@@ -1,7 +1,7 @@
 """Differentiable soft router over the best mamba / conformer / GRU.
 
-The three frozen experts (best of each type by mean FD_gain, see
-oracle_check.py) plus the previous-frame baseline form 4 routable options.
+The three frozen experts (best of each type by mean FD_gain) plus the
+previous-frame baseline form 4 routable options.
 A small MLP looks at the experts' disagreement + uncertainty + recent
 motion and outputs per-frame softmax weights; the blended prediction is
 trained to MINIMIZE FD directly. This optimizes the real objective
@@ -19,7 +19,7 @@ import torch.nn as nn
 from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
 from models import build_model, get_device
 
-# best of each model family (by mean FD_gain, from oracle_check.py).
+# best of each model family (by mean FD_gain).
 # Strong families first so indices 0,1,2 are mamba/conformer/gru (used by the
 # fixed-average controls below).
 EXPERTS = {

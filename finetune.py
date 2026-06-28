@@ -224,8 +224,8 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
 if __name__ == "__main__":
     import yaml
 
-    # Usage: python finetune.py [configs/gru_finetune.yaml]
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "configs/gru_finetune.yaml"
+    # Usage: python finetune.py [configs/finetune.yaml]
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "configs/finetune.yaml"
     cfg = yaml.safe_load(open(config_path))
     cfg["split_percentages"] = tuple(cfg["split_percentages"])
 

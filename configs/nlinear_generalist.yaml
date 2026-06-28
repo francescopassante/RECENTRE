@@ -1,13 +1,12 @@
-# DLinear generalist: channel-independent decomposition linear (Zeng et al. 2022).
+# NLinear generalist: channel-independent normalized linear (Zeng et al. 2022).
 # sequence_length must match data.sequence_length below.
 output_dir: checkpoints/generalist
 
 model:
-  type: dlinear
+  type: nlinear
   sequence_length: 10
   input_dim: 6
   output_dim: 6
-  kernel_size: 3  
 
 data:
   train_task: R+M+L

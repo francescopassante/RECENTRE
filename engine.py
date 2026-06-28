@@ -40,7 +40,7 @@ def fit(
     (fine-tuning); leave them at the defaults to disable it (pretraining).
 
     Early stopping and model selection use validation FD-gain.
-    Returns (best_state, best_epoch, train_loss_history, val_loss_history).
+    Returns (best_state, best_epoch).
     """
     mu = torch.tensor(mu, dtype=torch.float32, device=device)
     sigma = torch.tensor(sigma, dtype=torch.float32, device=device)

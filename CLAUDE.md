@@ -22,11 +22,10 @@ python evaluate.py checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep150.pth
 python compare.py checkpoints/beta_scan
 
 # Per-patient fine-tuning sweep -> CSV, then plot it
-python finetune.py configs/gru_finetune.yaml
+python finetune.py configs/finetune.yaml
 python finetune_plots.py
 
 # Per-frame router over frozen experts (best mamba/conformer/gru) + previous-frame baseline
-python oracle_check.py     # clairvoyant upper bound: how much routing headroom exists?
 python train_router.py     # train the realizable MLP router; reports FD_gain + headroom captured
 ```
 
@@ -41,7 +40,11 @@ A flat set of modules, deliberately simple (no packages, no type hints, no abstr
 - `metrics.py` — `fd`, `fd_gain`, and `evaluate()` (the one eval used by every script; returns per-sample arrays + mean NLL).
 - `engine.py` — `fit()`, the one training loop, shared by pretraining and per-patient fine-tuning.
 - `train.py` / `finetune.py` — drivers, each reads a YAML config.
-- `plots.py` (8 eval figures) / `finetune_plots.py` (CSV figures) / `evaluate.py` / `compare.py`.
+- `plots.py` (eval figures) / `finetune_plots.py` (CSV figures) / `evaluate.py` / `compare.py`.
+- `sweep.py` — shared `run_eval` + `make_figures` engine; `compare.py` (compare a folder of checkpoints grouped by a config field) and `robustness.py` (evaluate under added test-set noise) both drive it.
+- `resume.py` — warm-restart training from a checkpoint's optimizer/scheduler state.
+- `train_router.py` — the per-frame router experiment (see Router below).
+- `analyze_checkpoints.py` — ad-hoc script: print a comparison table over `checkpoints/generalist/`.
 - `configs/*.yaml` — the surface you edit: model type + hyperparameters, tasks, loss, β, epochs, finetune knobs.
 
 ## Architecture
@@ -62,7 +65,7 @@ A flat set of modules, deliberately simple (no packages, no type hints, no abstr
 
 **Calibration:** standardized residuals `z = (y − μ_pred) / σ_pred` are scale-invariant, computed in normalized space. Per-dim diagnostics in `plots.sigma_calibration`: mean(z)≈0, std(z)≈1, reduced χ² = mean(z²) ≈ 1, |z|≤1 ≈ 68.3%, |z|≤2 ≈ 95.4%.
 
-**Router (`train_router.py`, `oracle_check.py`):** an experiment in *combining* trained models instead of picking one. `EXPERTS` (a dict in `train_router.py`) names the frozen checkpoints — currently the best mamba/conformer/gru by mean FD_gain, loaded from `checkpoints/generalist/`; the previous-frame baseline is appended as an extra routable option. A small MLP (`Router`) reads per-frame features (each expert's residual `pred − base`, its predicted σ, and recent motion), emits softmax weights over the options, and the blended prediction is trained end-to-end to **minimize FD directly** (experts stay frozen). `oracle_check.py` is the non-realizable ceiling: a clairvoyant router that, knowing the target, picks the lowest-FD expert per frame (optionally also the baseline) — it measures the headroom; `train_router.py` reports the fraction of it actually captured. Discipline: the router trains on `val_ids` and is evaluated on `test_ids` (both unseen by every expert), with 15% of val held out for early stopping. **All experts must share the identical seeded R+M+L split** (`oracle_check.py` asserts `test_ids` match) — otherwise the router trains/evals on frames some expert already saw. Finding so far: the router beats the best single model and a static ensemble only marginally (captures ~11% of oracle headroom); most of the per-frame headroom is irreducible noise, so the single best architecture or a fixed average remains the practical choice.
+**Router (`train_router.py`):** an experiment in *combining* trained models instead of picking one. `EXPERTS` (a dict in `train_router.py`) names the frozen checkpoints — currently the best mamba/conformer/gru by mean FD_gain, loaded from `checkpoints/generalist/`; the previous-frame baseline is appended as an extra routable option. A small MLP (`Router`) reads per-frame features (each expert's residual `pred − base`, its predicted σ, and recent motion), emits softmax weights over the options, and the blended prediction is trained end-to-end to **minimize FD directly** (experts stay frozen). The same script also computes the non-realizable ceiling — a clairvoyant router that, knowing the target, picks the lowest-FD expert per frame — and reports the fraction of that headroom the trained router actually captures. Discipline: the router trains on `val_ids` and is evaluated on `test_ids` (both unseen by every expert), with 15% of val held out for early stopping. **All experts must share the identical seeded R+M+L split** — otherwise the router trains/evals on frames some expert already saw. Finding so far: the router beats the best single model and a static ensemble only marginally (captures ~11% of oracle headroom); most of the per-frame headroom is irreducible noise, so the single best architecture or a fixed average remains the practical choice.
 
 ## Conventions to preserve
 

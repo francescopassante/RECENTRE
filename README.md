@@ -99,7 +99,7 @@ python evaluate.py checkpoints/generalist/GRU_R+M+LvR+M+L_beta0.5_ep150.pth
 python compare.py checkpoints/beta_scan
 
 # 4. Per-patient fine-tuning sweep -> CSV, then plot it
-python finetune.py configs/gru_finetune.yaml
+python finetune.py configs/finetune.yaml
 python finetune_plots.py
 ```
 
