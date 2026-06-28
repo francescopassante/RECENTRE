@@ -10,12 +10,20 @@ def parse_task(task_string):
 
 class TimeSeriesDataset(Dataset):
 
-    def __init__(self, data, ids, sequence_length=10, device="cpu", time_augmentation=False, neg_augmentation=False, add_velocity=False, add_acceleration=False, vel_std=None, acc_std=None):
-        if not torch.is_tensor(data):
-            data = torch.from_numpy(data)
-        self.data = data.to(device=device, dtype=torch.float32)
-        # per-dim scales for the velocity/acceleration channels; stay None unless
-        # those channels are added (set below, or passed in from the train split)
+    def __init__(
+        self,
+        data,
+        ids,
+        sequence_length=10,
+        device="cpu",
+        time_augmentation=False,
+        neg_augmentation=False,
+        add_velocity=False,
+        add_acceleration=False,
+        vel_std=None,
+        acc_std=None,
+    ):
+        self.data = torch.from_numpy(data).to(device=device, dtype=torch.float32)
         self.vel_std = vel_std
         self.acc_std = acc_std
         if time_augmentation == True:
@@ -29,38 +37,40 @@ class TimeSeriesDataset(Dataset):
             self.data = torch.cat([self.data, data_neg], dim=0)
             self.ids = np.concatenate([self.ids, self.ids])
         if add_velocity or add_acceleration:
-            # derivative channels: first/second difference along time of the
-            # (already normalized) positions, zero-padded at the start to preserve
-            # length and scaled per-dim for conditioning. Appended AFTER
-            # the 6 position channels -> [N, T, 12] (vel) or [N, T, 18] (vel+acc).
-            # The first 6 channels stay the positions, so the residual/baseline
-            # (x[:, -1, :6]) read only those.
-            # Differences are taken over the stride (x[t]-x[t-2]), not adjacent
-            # frames, so they only use frames present in the stride-2 windows and
-            # don't leak the odd frames the model never sees. The per-dim scale
-            # (vel_std/acc_std) is passed in from the train split to avoid using
-            # val/test statistics; if None it is computed from this data.
-            pos = self.data                                                # [N, T, 6]
+            # [N, T, 12] ( if vel) or [N, T, 18] (if vel+acc).
+            # Differences are taken with step 2 (x[t]-x[t-2]),
+            # so they only use frames that the model sees, not the
+            # extra frames in between.
+            pos = self.data  # [N, T, 6]
+
+            # extra holds the velocity and acceleration channels
             extra = []
             if add_velocity:
-                vel = pos[:, 2:, :] - pos[:, :-2, :]                       # [N, T-2, 6]
-                vel = torch.cat([torch.zeros_like(vel[:, :2, :]), vel], dim=1)  # -> [N, T, 6]
+                # Compute vel such that v[0] = x[2] - x[0]
+                vel = pos[:, 2:, :] - pos[:, :-2, :]  # [N, T-2, 6]
+                # Pad 2 zeros, now v[0] = 0, v[1]= 0, v[2] = x[2] - x[0]
+                vel = torch.cat(
+                    [torch.zeros_like(vel[:, :2, :]), vel], dim=1
+                )  # [N, T, 6]
                 if vel_std is None:
-                    vel_std = vel.std(dim=(0, 1), keepdim=True) + 1e-6     # per-dim scale
+                    vel_std = vel.std(dim=(0, 1), keepdim=True) + 1e-6  # per-dim scale
                 self.vel_std = vel_std
                 extra.append(vel / vel_std.to(vel.device))
             if add_acceleration:
-                # second difference over the stride: a[t] = x[t] - 2*x[t-2] + x[t-4]
-                acc = pos[:, 4:, :] - 2 * pos[:, 2:-2, :] + pos[:, :-4, :]  # [N, T-4, 6]
-                acc = torch.cat([torch.zeros_like(acc[:, :4, :]), acc], dim=1)  # -> [N, T, 6]
+                # second difference: a[t] = (x[t] - x[t-2]) - (x[t-2] - x[t-4])
+                acc = (
+                    pos[:, 4:, :] - 2 * pos[:, 2:-2, :] + pos[:, :-4, :]
+                )  # [N, T-4, 6]
+                acc = torch.cat(
+                    [torch.zeros_like(acc[:, :4, :]), acc], dim=1
+                )  #  [N, T, 6]
                 if acc_std is None:
-                    acc_std = acc.std(dim=(0, 1), keepdim=True) + 1e-6     # per-dim scale
+                    acc_std = acc.std(dim=(0, 1), keepdim=True) + 1e-6  # per-dim scale
                 self.acc_std = acc_std
                 extra.append(acc / acc_std.to(acc.device))
-            self.data = torch.cat([pos] + extra, dim=2)                   # [N, T, 6/12/18]
+            self.data = torch.cat([pos] + extra, dim=2)  # [N, T, 6/12/18]
         self.time_span = sequence_length * 2
         self.N, self.T, self.D = self.data.shape
-
 
     def __len__(self):
         return self.N * (self.T - self.time_span + 1)
@@ -70,7 +80,9 @@ class TimeSeriesDataset(Dataset):
         t = index % (self.T - self.time_span + 1)  # Time index
 
         x = self.data[p, t : t + self.time_span : 2, :]  # Sub-sequence
-        y = self.data[p, t + (self.time_span) - 1, :6]  # Next time step (6 positions only)
+        y = self.data[
+            p, t + (self.time_span) - 1, :6
+        ]  # Next time step (6 positions only)
         return self.ids[p], x, y
 
 
@@ -174,7 +186,7 @@ def split_data(
     if False, allow them to overlap (but still split val/test). If there's an overlap in train_task and test_task,
     automatically set cross_patients to True to avoid data leakage.
     Pass ids=(train_ids, val_ids, test_ids) to reuse an exact saved split (e.g. when
-    resuming a checkpoint) instead of re-deriving it from the rng seed.
+    resuming a checkpoint).
     """
 
     train_tasks = parse_task(train_task)
@@ -200,10 +212,12 @@ def split_data(
     test_dicts = {task: task_dicts[task] for task in test_tasks}
 
     patient_ids = np.array(sorted(task_dicts["R"].keys()))
+
+    # default seed
     rng = np.random.default_rng(42)
 
     if ids is not None:
-        # reuse an exact saved split, bypassing the rng-based partitioning
+        # reuse an exact saved split, bypassing the random choice
         train_ids, val_ids, test_ids = ids
     elif cross_patients:
         # We must have patients set A for training, patients set B for validation and patients set C for testing
@@ -219,11 +233,12 @@ def split_data(
         )
         val_ids = np.setdiff1d(test_val_ids, test_ids)
     else:
+        # If train and task do not intersect and cross_patients = False,
+        # we can train on all the patients, while valid and test must still be splitted
         assert (
             sum(split_percentages[1:]) == 1.0
         ), "Split percentages for val and test must sum to 1.0 when cross_patients is False"
-        # If train and task do not intersect and cross_patients = False,
-        # we can train on all the patients, while valid and test must still be splitted
+
         train_ids = patient_ids
         test_ids = rng.choice(
             patient_ids,
@@ -244,11 +259,8 @@ def split_data(
         "Test patients: ",
         len(test_ids),
     )
-    print("R_shape = ", task_dicts["R"][train_ids[0]].shape[0])
-    print("M_shape = ", task_dicts["M"][train_ids[0]].shape[0])
-    print("L_shape = ", task_dicts["L"][train_ids[0]].shape[0])
 
-    # e.g. {"train": {"R": [N_tr, T_R, 6], "M": [N_tr, T_M, 6]}, "val": {"M": .., "L": ..}, "test": {"M":.., "L":..}}
+    # splits = e.g. {"train": {"R": [N_tr, T_R, 6], "M": [N_tr, T_M, 6]}, "val": {"M": .., "L": ..}, "test": {"M":.., "L":..}}
     splits = {}
     for split_name, split_ids, task_dict in zip(
         ["train", "val", "test"],
@@ -271,27 +283,56 @@ def split_data(
         for task in split:
             split[task] = (split[task] - mu) / sigma
 
-    # keep the whole dataset on `device` (GPU) so GPUBatchLoader can gather
+    # keep the whole dataset on GPU so GPUBatchLoader can gather
     # each batch there without per-batch host->device transfers
     train_datasets = [
-        TimeSeriesDataset(splits["train"][task], train_ids, sequence_length, device, time_augmentation=time_augmentation, neg_augmentation=neg_augmentation, add_velocity=add_velocity, add_acceleration=add_acceleration)
+        TimeSeriesDataset(
+            splits["train"][task],
+            train_ids,
+            sequence_length,
+            device,
+            time_augmentation=time_augmentation,
+            neg_augmentation=neg_augmentation,
+            add_velocity=add_velocity,
+            add_acceleration=add_acceleration,
+        )
         for task in splits["train"]
     ]
 
-    # Reuse the velocity/acceleration scales computed on the train split for val
-    # and test, so val/test never use their own statistics. One entry per task:
-    # feat_std[task] = (vel_std, acc_std). A test task that wasn't in training
-    # (cross-task) falls back to (None, None) and re-computes its own scale.
+    # Use velocity and acceleration sigmas of training set to normalize.
+    # mean is already 0 because motion is normalized.
     feat_std = {}
     for task, ds in zip(splits["train"], train_datasets):
         feat_std[task] = (ds.vel_std, ds.acc_std)
 
     val_datasets = [
-        TimeSeriesDataset(splits["val"][task], val_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity, add_acceleration=add_acceleration, vel_std=feat_std.get(task, (None, None))[0], acc_std=feat_std.get(task, (None, None))[1])
+        TimeSeriesDataset(
+            splits["val"][task],
+            val_ids,
+            sequence_length,
+            device,
+            time_augmentation=False,
+            neg_augmentation=False,
+            add_velocity=add_velocity,
+            add_acceleration=add_acceleration,
+            vel_std=feat_std.get(task, (None, None))[0],
+            acc_std=feat_std.get(task, (None, None))[1],
+        )
         for task in splits["val"]
     ]
     test_datasets = [
-        TimeSeriesDataset(splits["test"][task], test_ids, sequence_length, device, time_augmentation=False, neg_augmentation=False, add_velocity=add_velocity, add_acceleration=add_acceleration, vel_std=feat_std.get(task, (None, None))[0], acc_std=feat_std.get(task, (None, None))[1])
+        TimeSeriesDataset(
+            splits["test"][task],
+            test_ids,
+            sequence_length,
+            device,
+            time_augmentation=False,
+            neg_augmentation=False,
+            add_velocity=add_velocity,
+            add_acceleration=add_acceleration,
+            vel_std=feat_std.get(task, (None, None))[0],
+            acc_std=feat_std.get(task, (None, None))[1],
+        )
         for task in splits["test"]
     ]
 
