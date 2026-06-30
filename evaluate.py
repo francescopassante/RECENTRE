@@ -69,13 +69,16 @@ for task in test_tasks:
     seq_len = config["data"]["sequence_length"]
     add_velocity = config["data"].get("add_velocity", False)
     add_acceleration = config["data"].get("add_acceleration", False)
-    # reuse the train-split velocity/acceleration scales saved in the checkpoint
-    # (per task), so the eval features are scaled exactly as in training
     vel_std, acc_std = ckpt.get("feat_std", {}).get(task, (None, None))
     ds = TimeSeriesDataset(
-        data, test_ids, sequence_length=seq_len, device=device,
-        add_velocity=add_velocity, add_acceleration=add_acceleration,
-        vel_std=vel_std, acc_std=acc_std,
+        data,
+        test_ids,
+        sequence_length=seq_len,
+        device=device,
+        add_velocity=add_velocity,
+        add_acceleration=add_acceleration,
+        vel_std=vel_std,
+        acc_std=acc_std,
     )
     loader = GPUBatchLoader(ds, batch_size=1024, shuffle=False)
 
@@ -107,11 +110,10 @@ for task in test_tasks:
     fd_pred_list.append(out["fd_pred"])
     fd_base_list.append(out["fd_base"])
     z_list.append(out["z"])
-    # std stays per-dim in physical units (no ×50 here); fd_vs_sigma applies the
-    # ×50 rotation weighting itself when collapsing to an FD-scale σ.
     std_list.append(out["std"])
     labels.append(np.full(len(p), task))
 
+# Concatenate all tasks (and keep track with task_labels)
 pred = np.concatenate(pred_list)
 true = np.concatenate(true_list)
 base = np.concatenate(base_list)
@@ -119,7 +121,7 @@ fd_pred = np.concatenate(fd_pred_list)
 fd_base = np.concatenate(fd_base_list)
 z = np.concatenate(z_list)
 std = np.concatenate(std_list)
-task_labels = np.concatenate(labels)  # one label per sample/frame (they align)
+task_labels = np.concatenate(labels)
 
 # aggregate per patient FD_pred, FD_base and FD_gain for each task
 fd_per_patient_pred, fd_per_patient_base, fdg_per_patient = {}, {}, {}

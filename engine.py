@@ -34,11 +34,7 @@ def fit(
     verbose=True,
 ):
     """Training loop used for both pretraining and per-patient fine-tuning.
-
-    loss is "gaussian_nll" (uses the variance head) or "mse" (uses the mean only).
-    Pass a reference state dict + lambda_l2sp > 0 to add the L2-SP penalty
-    (fine-tuning); leave them at the defaults to disable it (pretraining).
-
+    Loss is "gaussian_nll" or "mse"
     Early stopping and model selection use validation FD-gain.
     Returns (best_state, best_epoch).
     """
@@ -50,49 +46,50 @@ def fit(
     best_val_fdg = float("-inf")
     best_state = None
     best_epoch = 0
-    early_counter = 0
+    early_stop_counter = 0
 
     pbar = tqdm.trange(epochs, disable=not verbose)
     for epoch in pbar:
         model.train()
-        # accumulate sample-weighted loss
         train_base_sum = torch.zeros((), device=device)
         # count samples in the batch
         train_n = 0
         # store fd for baseline and model frame by frame
         train_fd_bases = []
         train_fd_preds = []
-        # transient per-batch bar so a slow epoch shows live progress (it/s), not silence
-        for _, x, y in tqdm.tqdm(train_loader, leave=False, desc=f"epoch {epoch + 1}", disable=not verbose):
+        for _, x, y in tqdm.tqdm(
+            train_loader, leave=False, desc=f"epoch {epoch + 1}", disable=not verbose
+        ):
             optimizer.zero_grad()
             x, y = x.to(device), y.to(device)
-            mean, var = model(x)
 
-            base = nll(mean, y, var) if loss == "gaussian_nll" else mse(mean, y)
+            mean, var = model(x)
+            base_loss = nll(mean, y, var) if loss == "gaussian_nll" else mse(mean, y)
 
             # baseline prediction is just the last frame (6 positions only)
             last_x = x[:, -1, :6]
+
             fd_base = fd(last_x, y, mu, sigma)
             fd_pred = fd(mean, y, mu, sigma)
             fdg = fd_gain(fd_base, fd_pred)
 
-            total = base - beta * fdg.mean()
+            loss = base_loss - beta * fdg.mean()
 
             # add L2SP if finetuning
             if reference is not None and lambda_l2sp > 0:
-                total = total + lambda_l2sp * l2sp(model, reference)
+                loss = loss + lambda_l2sp * l2sp(model, reference)
 
-            total.backward()
+            loss.backward()
             optimizer.step()
 
             bs = y.size(0)
             train_n += bs
-            train_base_sum += base.detach() * bs
+            train_base_loss_sum += base_loss.detach() * bs
 
             train_fd_bases.append(fd_base.detach())
             train_fd_preds.append(fd_pred.detach())
 
-        train_base = (train_base_sum / train_n).item()
+        train_base = (train_base_loss_sum / train_n).item()
         train_fdg = (
             fd_gain(torch.cat(train_fd_bases), torch.cat(train_fd_preds)).mean().item()
         )
@@ -135,13 +132,13 @@ def fit(
         if val_fdg > best_val_fdg:
             best_val_fdg = val_fdg
             best_epoch = epoch + 1
-            early_counter = 0
+            early_stop_counter = 0
             # clone so later epochs don't mutate the stored best weights
             # (state_dict() returns references to the live parameters)
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
-            early_counter += 1
-            if early_counter >= patience:
+            early_stop_counter += 1
+            if early_stop_counter >= patience:
                 break
 
     return best_state, best_epoch

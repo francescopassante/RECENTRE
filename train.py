@@ -9,6 +9,12 @@ from engine import fit
 from metrics import evaluate
 from models import build_model, get_device
 
+"""
+===================================
+Model building, data loading
+===================================
+"""
+
 # Usage: python train.py config.yaml
 config_path = sys.argv[1]
 
@@ -23,20 +29,28 @@ model_config, data_config, train_config = (
 device = get_device()
 
 # Split patient in train/val/test
-train_loader, val_loader, test_loader, mu, sigma, train_ids, val_ids, test_ids, feat_std = (
-    split_data(
-        train_task=data_config["train_task"],
-        test_task=data_config["test_task"],
-        split_percentages=tuple(data_config["split_percentages"]),
-        batch_size=data_config["batch_size"],
-        cross_patients=data_config["cross_patients"],
-        sequence_length=data_config["sequence_length"],
-        device=device,
-        time_augmentation = data_config.get("time_augmentation", False),
-        neg_augmentation = data_config.get("neg_augmentation", False),
-        add_velocity = data_config.get("add_velocity", False),
-        add_acceleration = data_config.get("add_acceleration", False)
-    )
+(
+    train_loader,
+    val_loader,
+    test_loader,
+    mu,
+    sigma,
+    train_ids,
+    val_ids,
+    test_ids,
+    feat_std,
+) = split_data(
+    train_task=data_config["train_task"],
+    test_task=data_config["test_task"],
+    split_percentages=tuple(data_config["split_percentages"]),
+    batch_size=data_config["batch_size"],
+    cross_patients=data_config["cross_patients"],
+    sequence_length=data_config["sequence_length"],
+    device=device,
+    time_augmentation=data_config.get("time_augmentation", False),
+    neg_augmentation=data_config.get("neg_augmentation", False),
+    add_velocity=data_config.get("add_velocity", False),
+    add_acceleration=data_config.get("add_acceleration", False),
 )
 
 # Build specified model using config parameters
@@ -44,16 +58,10 @@ model = build_model(model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"model: {model_config['type']}  |  trainable params: {n_params:,}")
 
-# Optional torch.compile (train.compile: true). In-place compile keeps the
-# state_dict keys unchanged, so the saved checkpoint still loads in evaluate.py
-# with a plain build_model(). Big win for launch-overhead-bound models (e.g. the
-# Mamba scan). Falls back to eager if compile is unavailable/unsupported.
+# Optional compile. Speeds up launch-overhead bound models (e.g. mamba).
 if train_config.get("compile", False):
-    try:
-        model.compile()
-        print("torch.compile: enabled (first batch will be slow while it compiles)")
-    except Exception as e:
-        print(f"torch.compile unavailable ({e}); continuing uncompiled")
+    model.compile()
+    print("torch.compile: enabled (first batch will be slow while it compiles)")
 
 optimizer = torch.optim.AdamW(
     model.parameters(), lr=train_config["lr"], weight_decay=train_config["weight_decay"]
@@ -61,6 +69,12 @@ optimizer = torch.optim.AdamW(
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode="min", factor=0.5, patience=10
 )
+
+"""
+===========
+Training
+===========
+"""
 
 # Train model and save the best state
 best_state, best_epoch = fit(
@@ -77,6 +91,9 @@ best_state, best_epoch = fit(
     beta=train_config["beta"],
     patience=train_config["patience"],
 )
+
+# Now we evaluate on the validation set to get the predicted sigma distribution
+# it is saved in the checkpoint and used for thresholding
 
 # Load the best state
 model.load_state_dict(best_state)
@@ -95,10 +112,7 @@ checkpoint = {
     "test_ids": test_ids,
     "best_epoch": best_epoch,
     "pred_sigma": pred_sigma,
-    # per-task velocity/acceleration scales from the train split, so evaluate.py
-    # rebuilds the input features with the same scaling (no val/test leakage)
     "feat_std": feat_std,
-    # optimizer/scheduler state so resume.py can warm-restart at the right LR
     "optimizer_state": optimizer.state_dict(),
     "scheduler_state": scheduler.state_dict(),
 }

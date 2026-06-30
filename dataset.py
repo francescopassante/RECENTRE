@@ -88,11 +88,8 @@ class TimeSeriesDataset(Dataset):
 
 class GPUBatchLoader:
     """
-    Builds each batch with one vectorized gather on the GPU instead of
-    per-sample __getitem__ + collate. The standard DataLoader is fine when
-    samples live on CPU and the worker copies them to GPU in bulk, but when
-    every sample is already a tiny CUDA tensor the per-sample Python loop and
-    torch.stack dominate runtime.
+    HCP dataset is ~2M samples -> 2M python calls. Since the whole dataset
+    fits on GPU, we avoid python loops with a single vectorized call for the whole batch.
     """
 
     def __init__(self, dataset, batch_size, shuffle=False):
@@ -129,11 +126,8 @@ class GPUBatchLoader:
 
 class MultiTaskLoader:
     """Mixes batches from several per-task loaders into one epoch.
-
-    Each underlying loader handles its own intra-task shuffling and gather;
-    this wrapper just decides which loader to draw the next batch from. With
-    shuffle=True the per-step task identity is random, so each gradient step
-    sees a single-task batch but consecutive steps cover all tasks.
+    Each loader handles its own shuffling and batching;
+    this wrapper chooses which loader to use for the next batch.
     """
 
     def __init__(self, loaders, shuffle=True, seed=None):

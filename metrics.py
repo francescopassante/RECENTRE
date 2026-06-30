@@ -65,6 +65,7 @@ def evaluate(model, loader, mu, sigma, device, sigma_threshold=None, noise=None)
             trues.append((y * sigma + mu).cpu().numpy())
             bases.append((last_x * sigma + mu).cpu().numpy())
             stds.append(std.cpu().numpy())
+            # ids carries the patient id of each frame, so that later we can aggregate per patient.
             ids.extend(list(p))
 
     return {
