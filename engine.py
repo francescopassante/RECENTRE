@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import tqdm
 
-from metrics import fd, fd_gain
+from metrics import fd, fd_gain, jerk_penalty
 
 
 def l2sp(model, reference):
@@ -28,6 +28,7 @@ def fit(
     sigma,
     loss="gaussian_nll",
     beta=0.1,
+    gamma=0.0,
     patience=10,
     reference=None,
     lambda_l2sp=0.0,
@@ -51,7 +52,7 @@ def fit(
     pbar = tqdm.trange(epochs, disable=not verbose)
     for epoch in pbar:
         model.train()
-        train_base_sum = torch.zeros((), device=device)
+        train_base_loss_sum = torch.zeros((), device=device)
         # count samples in the batch
         train_n = 0
         # store fd for baseline and model frame by frame
@@ -74,6 +75,10 @@ def fit(
             fdg = fd_gain(fd_base, fd_pred)
 
             loss = base_loss - beta * fdg.mean()
+
+            # physics-informed motion-smoothness term (jerk on the step-2 lattice)
+            if gamma > 0:
+                loss = loss + gamma * jerk_penalty(mean, x)
 
             # add L2SP if finetuning
             if reference is not None and lambda_l2sp > 0:

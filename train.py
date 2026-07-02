@@ -89,6 +89,7 @@ best_state, best_epoch = fit(
     sigma=sigma,
     loss=train_config["loss"],
     beta=train_config["beta"],
+    gamma=train_config.get("gamma", 0.0),
     patience=train_config["patience"],
 )
 
