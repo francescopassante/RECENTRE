@@ -73,18 +73,41 @@ def eval_checkpoint(path):
     }
 
 
-# ── evaluate every checkpoint, keep the best one per (model type, seq_len) ──
-best = {}  # (mtype, seq_len) -> eval result
+# ── evaluate every checkpoint ────────────────────────────────────────
+RECIPE_FLAGS = ("add_velocity", "add_acceleration")
+
+records = []  # (mtype, seq_len, flags, result)
 for path in sorted(glob.glob(os.path.join(CHECKPOINT_DIR, "*.pth"))):
     config = torch.load(path, map_location="cpu", weights_only=False)["config"]
     mtype = config["model"]["type"]
     seq_len = config["data"]["sequence_length"]
+    flags = tuple(config["data"].get(f, False) for f in RECIPE_FLAGS)
 
     r = eval_checkpoint(path)
     print(
-        f"{mtype:<12} seq_len={seq_len:<4} fdg={r['fdg']:.4f}  ({os.path.basename(path)})"
+        f"{mtype:<12} seq_len={seq_len:<4} flags={flags} fdg={r['fdg']:.4f}  ({os.path.basename(path)})"
     )
+    records.append((mtype, seq_len, flags, r))
 
+# ── per model class, fix the winning recipe flags (e.g. add_acceleration) ──
+# instead of letting them vary opportunistically per seq_len, which would mix
+# a strictly-worse variant (e.g. no acceleration) into an otherwise
+# accelerated line just because that seq_len happened to lack the better one.
+best_flags_by_model = {}
+for mtype in {rec[0] for rec in records}:
+    by_flag = defaultdict(list)
+    for m, _, flags, r in records:
+        if m == mtype:
+            by_flag[flags].append(r["fdg"])
+    best_flags_by_model[mtype] = max(by_flag, key=lambda f: max(by_flag[f]))
+
+filtered = [
+    (m, s, r) for m, s, flags, r in records if flags == best_flags_by_model[m]
+]
+
+# ── keep the best remaining checkpoint per (model type, seq_len) ──
+best = {}  # (mtype, seq_len) -> eval result
+for mtype, seq_len, r in filtered:
     key = (mtype, seq_len)
     if key not in best or r["fdg"] > best[key]["fdg"]:
         best[key] = r
