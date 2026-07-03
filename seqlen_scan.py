@@ -1,14 +1,12 @@
 """Plot FD gain (and FD, %>0) vs sequence length, one line per model architecture.
 
-Evaluates every checkpoint in a folder and groups by model type — one checkpoint
-per (model type, sequence_length) is expected, so no best-of selection is done.
+Evaluates a hardcoded list of checkpoints (one per model type / sequence_length)
+and groups by model type.
 
-Usage: python seqlen_scan.py [checkpoints/generalist]
+Usage: python seqlen_scan.py
 """
 
-import glob
 import os
-import sys
 from collections import defaultdict
 
 import matplotlib.pyplot as plt
@@ -19,7 +17,21 @@ from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
 from metrics import evaluate
 from models import build_model, get_device
 
-CHECKPOINT_DIR = sys.argv[1] if len(sys.argv) > 1 else "checkpoints/generalist"
+CHECKPOINT_DIR = "checkpoints/generalist"
+CHECKPOINTS = [
+    "conformer_R+M+LvR+M+L_beta0.5_ep100.pth",
+    "conformer_R+M+LvR+M+L_beta0.5_ep150_2.pth",
+    "conformer_R+M+LvR+M+L_beta0.5_ep100_2.pth",
+    "conformer_R+M+LvR+M+L_beta0.5_ep150.pth",
+    "mamba_R+M+LvR+M+L_beta0.5_ep100_5.pth",
+    "mamba_R+M+LvR+M+L_beta0.5_ep100_2.pth",
+    "mamba_R+M+LvR+M+L_beta0.5_ep100_3.pth",
+    "mamba_R+M+LvR+M+L_beta0.5_ep100_4.pth",
+    "gru_R+M+LvR+M+L_beta0.5_ep100_7.pth",
+    "gru_R+M+LvR+M+L_beta0.5_ep100_6.pth",
+    "gru_R+M+LvR+M+L_beta0.5_ep100.pth",
+    "gru_R+M+LvR+M+L_beta0.5_ep150_2.pth",
+]
 RESULTS_DIR = "results/seqlen_scan"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -71,15 +83,16 @@ def eval_checkpoint(path):
     }
 
 
-# ── evaluate every checkpoint, one series per model type ──
+# ── evaluate each checkpoint, one series per model type ──
 by_model = defaultdict(list)  # mtype -> [(seq_len, result), ...]
-for path in sorted(glob.glob(os.path.join(CHECKPOINT_DIR, "*.pth"))):
+for fname in CHECKPOINTS:
+    path = os.path.join(CHECKPOINT_DIR, fname)
     config = torch.load(path, map_location="cpu", weights_only=False)["config"]
     mtype = config["model"]["type"]
     seq_len = config["data"]["sequence_length"]
 
     r = eval_checkpoint(path)
-    print(f"{mtype:<12} seq_len={seq_len:<4} fdg={r['fdg']:.4f}  ({os.path.basename(path)})")
+    print(f"{mtype:<12} seq_len={seq_len:<4} fdg={r['fdg']:.4f}  ({fname})")
     by_model[mtype].append((seq_len, r))
 
 for entries in by_model.values():
