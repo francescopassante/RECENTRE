@@ -126,7 +126,6 @@ for ax, title, ylabel in zip(axes, titles, ylabels):
     ax.set_ylabel(ylabel)
     ax.set_title(f"{title} vs sequence length")
     ax.legend(fontsize=8)
-axes[0].axhline(0, color="black", lw=0.8)
 
 fig.suptitle("Per-architecture performance vs sequence length")
 fig.tight_layout()
