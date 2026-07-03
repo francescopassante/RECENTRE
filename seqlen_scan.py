@@ -14,10 +14,12 @@ import sys
 from collections import defaultdict
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 
-from models import get_device
-from sweep import run_eval
+from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
+from metrics import evaluate
+from models import build_model, get_device
 
 CHECKPOINT_DIR = sys.argv[1] if len(sys.argv) > 1 else "checkpoints/generalist"
 RESULTS_DIR = "results/seqlen_scan"
@@ -25,14 +27,60 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 device = get_device()
 
+
+def eval_checkpoint(path):
+    """Evaluate one checkpoint on its test set (mirrors analyze_checkpoints.py)."""
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    config = ckpt["config"]
+    mu, sigma = ckpt["mu"], ckpt["sigma"]
+    test_ids = ckpt["test_ids"]
+
+    model = build_model(config["model"]).to(device)
+    model.load_state_dict(ckpt["model_state"])
+
+    test_tasks = parse_task(config["data"]["test_task"])
+    seq_len = config["data"]["sequence_length"]
+    add_velocity = config["data"].get("add_velocity", False)
+    add_acceleration = config["data"].get("add_acceleration", False)
+
+    all_fd_pred, all_fd_base = [], []
+    for task in test_tasks:
+        data_dict = np.load(f"datasets/{task}_dict.npy", allow_pickle=True).item()
+        data = (np.array([data_dict[pid] for pid in test_ids]) - mu) / sigma
+        vel_std, acc_std = ckpt.get("feat_std", {}).get(task, (None, None))
+        ds = TimeSeriesDataset(
+            data,
+            test_ids,
+            sequence_length=seq_len,
+            device=device,
+            add_velocity=add_velocity,
+            add_acceleration=add_acceleration,
+            vel_std=vel_std,
+            acc_std=acc_std,
+        )
+        loader = GPUBatchLoader(ds, batch_size=1024, shuffle=False)
+        out = evaluate(model, loader, mu, sigma, device)
+        all_fd_pred.append(out["fd_pred"])
+        all_fd_base.append(out["fd_base"])
+
+    fd_pred = np.concatenate(all_fd_pred)
+    fd_base = np.concatenate(all_fd_base)
+    fdg_per_sample = (fd_base - fd_pred) / (fd_base + 1e-6)
+    return {
+        "fd_pred": float(fd_pred.mean()),
+        "fdg": float(fdg_per_sample.mean()),
+        "fdg_per_sample": fdg_per_sample,
+    }
+
+
 # ── evaluate every checkpoint, keep the best one per (model type, seq_len) ──
-best = {}  # (mtype, seq_len) -> run_eval result
+best = {}  # (mtype, seq_len) -> eval result
 for path in sorted(glob.glob(os.path.join(CHECKPOINT_DIR, "*.pth"))):
     config = torch.load(path, map_location="cpu", weights_only=False)["config"]
     mtype = config["model"]["type"]
     seq_len = config["data"]["sequence_length"]
 
-    r = run_eval(path, device)
+    r = eval_checkpoint(path)
     print(
         f"{mtype:<12} seq_len={seq_len:<4} fdg={r['fdg']:.4f}  ({os.path.basename(path)})"
     )
