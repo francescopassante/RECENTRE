@@ -53,7 +53,7 @@ def eval_checkpoint(path):
     add_velocity = config["data"].get("add_velocity", False)
     add_acceleration = config["data"].get("add_acceleration", False)
 
-    all_fd_pred, all_fd_base = [], []
+    all_fd_pred, all_fd_base, all_deviation = [], [], []
     for task in test_tasks:
         data_dict = np.load(f"datasets/{task}_dict.npy", allow_pickle=True).item()
         data = (np.array([data_dict[pid] for pid in test_ids]) - mu) / sigma
@@ -72,14 +72,20 @@ def eval_checkpoint(path):
         out = evaluate(model, loader, mu, sigma, device)
         all_fd_pred.append(out["fd_pred"])
         all_fd_base.append(out["fd_base"])
+        # how far the model's prediction moves from the previous-frame baseline,
+        # in the same translation + 50mm-scaled-rotation units as FD
+        diff = np.abs(out["pred"] - out["base"])
+        all_deviation.append(diff[:, :3].sum(axis=1) + 50 * diff[:, 3:].sum(axis=1))
 
     fd_pred = np.concatenate(all_fd_pred)
     fd_base = np.concatenate(all_fd_base)
     fdg_per_sample = (fd_base - fd_pred) / (fd_base + 1e-6)
+    deviation = np.concatenate(all_deviation)
     return {
         "fd_pred": float(fd_pred.mean()),
         "fdg": float(fdg_per_sample.mean()),
         "fdg_per_sample": fdg_per_sample,
+        "deviation": float(deviation.mean()),
     }
 
 
@@ -92,7 +98,10 @@ for fname in CHECKPOINTS:
     seq_len = config["data"]["sequence_length"]
 
     r = eval_checkpoint(path)
-    print(f"{mtype:<12} seq_len={seq_len:<4} fdg={r['fdg']:.4f}  ({fname})")
+    print(
+        f"{mtype:<12} seq_len={seq_len:<4} fdg={r['fdg']:.4f} "
+        f"deviation_from_baseline={r['deviation']:.4f}mm  ({fname})"
+    )
     by_model[mtype].append((seq_len, r))
 
 for entries in by_model.values():
