@@ -1,9 +1,7 @@
-"""Plot best-per-architecture FD gain (and FD, %>0) vs sequence length.
+"""Plot FD gain (and FD, %>0) vs sequence length, one line per model architecture.
 
-Evaluates every checkpoint in a folder, groups by (model type, sequence_length),
-and keeps only the best-performing checkpoint (highest FD gain) at each length —
-i.e. the best choice of hyperparameters other than sequence_length, which is the
-sweep axis. Draws one line per model architecture.
+Evaluates every checkpoint in a folder and groups by model type — one checkpoint
+per (model type, sequence_length) is expected, so no best-of selection is done.
 
 Usage: python seqlen_scan.py [checkpoints/generalist]
 """
@@ -73,49 +71,17 @@ def eval_checkpoint(path):
     }
 
 
-# ── evaluate every checkpoint ────────────────────────────────────────
-RECIPE_FLAGS = ("add_velocity", "add_acceleration")
-
-records = []  # (mtype, seq_len, flags, result)
+# ── evaluate every checkpoint, one series per model type ──
+by_model = defaultdict(list)  # mtype -> [(seq_len, result), ...]
 for path in sorted(glob.glob(os.path.join(CHECKPOINT_DIR, "*.pth"))):
     config = torch.load(path, map_location="cpu", weights_only=False)["config"]
     mtype = config["model"]["type"]
     seq_len = config["data"]["sequence_length"]
-    flags = tuple(config["data"].get(f, False) for f in RECIPE_FLAGS)
 
     r = eval_checkpoint(path)
-    print(
-        f"{mtype:<12} seq_len={seq_len:<4} flags={flags} fdg={r['fdg']:.4f}  ({os.path.basename(path)})"
-    )
-    records.append((mtype, seq_len, flags, r))
-
-# ── per model class, fix the winning recipe flags (e.g. add_acceleration) ──
-# instead of letting them vary opportunistically per seq_len, which would mix
-# a strictly-worse variant (e.g. no acceleration) into an otherwise
-# accelerated line just because that seq_len happened to lack the better one.
-best_flags_by_model = {}
-for mtype in {rec[0] for rec in records}:
-    by_flag = defaultdict(list)
-    for m, _, flags, r in records:
-        if m == mtype:
-            by_flag[flags].append(r["fdg"])
-    best_flags_by_model[mtype] = max(by_flag, key=lambda f: max(by_flag[f]))
-
-filtered = [
-    (m, s, r) for m, s, flags, r in records if flags == best_flags_by_model[m]
-]
-
-# ── keep the best remaining checkpoint per (model type, seq_len) ──
-best = {}  # (mtype, seq_len) -> eval result
-for mtype, seq_len, r in filtered:
-    key = (mtype, seq_len)
-    if key not in best or r["fdg"] > best[key]["fdg"]:
-        best[key] = r
-
-# ── one series per model type, sorted by sequence length ──
-by_model = defaultdict(list)
-for (mtype, seq_len), r in best.items():
+    print(f"{mtype:<12} seq_len={seq_len:<4} fdg={r['fdg']:.4f}  ({os.path.basename(path)})")
     by_model[mtype].append((seq_len, r))
+
 for entries in by_model.values():
     entries.sort(key=lambda x: x[0])
 
@@ -145,11 +111,11 @@ for ax, title, ylabel in zip(axes, titles, ylabels):
     ax.set_xticklabels([str(s) for s in all_seq_lens])
     ax.set_xlabel("sequence length")
     ax.set_ylabel(ylabel)
-    ax.set_title(f"Best {title} vs sequence length")
+    ax.set_title(f"{title} vs sequence length")
     ax.legend(fontsize=8)
 axes[0].axhline(0, color="black", lw=0.8)
 
-fig.suptitle("Best-per-architecture performance vs sequence length")
+fig.suptitle("Per-architecture performance vs sequence length")
 fig.tight_layout()
 out_path = os.path.join(RESULTS_DIR, "fdg_vs_seqlen.png")
 fig.savefig(out_path, bbox_inches="tight")
