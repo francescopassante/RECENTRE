@@ -6,15 +6,19 @@ two input-window lengths gives two rows. For each family we pick its best
 checkpoint (highest mean FD-gain) in the given directory, then report:
 
   accuracy    — mean FD (model), mean FD-gain, % of frames with FD-gain > 0, NLL
-  robustness  — FD-gain retained at 0.3σ input noise (as a % of the clean gain),
-                and the noise level (breakdown σ) at which FD-gain falls to 0
+  robustness  — model FD inflation at 0.3σ input noise (% rise over clean FD),
+                and the noise σ (tolerance) at which the noisy model stops
+                beating a *clean* previous-frame baseline
   deployment  — parameter count, float32 size, FLOPs / window, single-frame
                 latency and batched throughput
 
-The robustness columns reuse the same additive-Gaussian noise model as
-robustness.py (x += noise · N(0,1) in normalized space); the deployment columns
-reuse the profiling block from evaluate.py. Accuracy is the single evaluate()
-path via sweep.run_eval, so nothing is re-derived here.
+The robustness columns add the same additive-Gaussian input noise as
+robustness.py (x += noise · N(0,1) in normalized space) but track the model's
+ABSOLUTE FD against the fixed clean-baseline reference: adding noise also
+corrupts the previous-frame baseline (it *is* the last input frame), so FD-gain
+under noise is a ratio of two moving targets and is not summarized here. The
+deployment columns reuse the profiling block from evaluate.py. Accuracy is the
+single evaluate() path, so nothing is re-derived here.
 
 Usage: python benchmark.py [checkpoints/generalist]
 
@@ -38,7 +42,7 @@ from models import build_model, get_device
 CKPT_DIR = sys.argv[1] if len(sys.argv) > 1 else "checkpoints/generalist"
 RESULTS_DIR = "results/benchmark"
 NOISE_LEVELS = [0.1, 0.3, 0.5, 0.7, 0.9]  # robustness sweep (σ, normalized space)
-RETAIN_AT = 0.3  # the noise level whose retained FD-gain becomes a table column
+DEGRADE_AT = 0.3  # the noise level whose model-FD inflation becomes a table column
 BATCH_SIZE = 1024  # for the throughput measurement
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -142,24 +146,32 @@ def eval_ckpt(ckpt, noise=None):
     return {
         "fdg": float(fdg_per_sample.mean()),
         "fd_pred": float(fd_p.mean()),
+        "fd_base": float(fd_b.mean()),
         "fdg_per_sample": fdg_per_sample,
         "nll": nll_sum / len(test_tasks),
     }
 
 
-# ── robustness: FD-gain retention at 0.3σ, and the breakdown noise level ──
-def breakdown_sigma(levels, fdgs):
-    """First noise level where FD-gain crosses 0 (linearly interpolated).
+# ── robustness: model-FD inflation at 0.3σ, and the noise tolerance σ ──
+def tolerance_sigma(levels, fd_preds, fd_base_clean):
+    """First noise level where the model's FD rises above the *clean* baseline FD.
 
-    `levels`/`fdgs` are aligned and start at the clean point (level 0). Returns a
-    float σ, 0.0 if the model is already below baseline clean, or None if it
-    never breaks down within the swept range (report as '>max').
+    Fixed-reference robustness: `fd_preds` is the model's mean FD at each noise
+    level (model fed noisy input, scored against the clean target); `levels` are
+    the aligned noise σ starting at the clean point (level 0). We report the σ at
+    which the noisy model stops beating a clean previous-frame predictor
+    (`fd_base_clean`), linearly interpolated. Returns 0.0 if the model never beat
+    the baseline even clean, or None if it still beats it across the whole swept
+    range (report as '>max'). Using the clean baseline as a fixed yardstick
+    avoids FD-gain's moving-denominator problem (the noisy baseline degrades too).
     """
-    if fdgs[0] <= 0:
+    if fd_preds[0] >= fd_base_clean:
         return 0.0
-    for (x0, y0), (x1, y1) in zip(zip(levels, fdgs), zip(levels[1:], fdgs[1:])):
-        if y1 <= 0:  # crossed between x0 and x1
-            return x0 + (x1 - x0) * y0 / (y0 - y1)
+    for (x0, y0), (x1, y1) in zip(
+        zip(levels, fd_preds), zip(levels[1:], fd_preds[1:])
+    ):
+        if y1 >= fd_base_clean:  # crossed between x0 and x1
+            return x0 + (x1 - x0) * (fd_base_clean - y0) / (y1 - y0)
     return None
 
 
@@ -185,17 +197,23 @@ for (mtype, seq_len), (clean_fdg, fname, clean) in best.items():
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     print(f"\n{mtype} (seq={seq_len}): best = {fname}")
 
-    # robustness sweep (clean point reused from pass 1 as level 0)
-    levels, fdgs = [0.0], [clean_fdg]
-    fdg_at = {}
+    # robustness sweep: track the model's ABSOLUTE FD as input noise grows, against
+    # the fixed clean-baseline reference (the noisy baseline is not a stable yardstick).
+    # clean point reused from pass 1 as level 0.
+    fd_base_clean = clean["fd_base"]
+    levels, fd_preds = [0.0], [clean["fd_pred"]]
+    fd_pred_at = {}
     for noise in NOISE_LEVELS:
         r = eval_ckpt(ckpt, noise=noise)
         levels.append(noise)
-        fdgs.append(r["fdg"])
-        fdg_at[noise] = r["fdg"]
-        print(f"  noise={noise:g}: FDg={r['fdg']:.4f}")
-    retain = 100.0 * fdg_at[RETAIN_AT] / clean_fdg if clean_fdg > 0 else float("nan")
-    bd = breakdown_sigma(levels, fdgs)
+        fd_preds.append(r["fd_pred"])
+        fd_pred_at[noise] = r["fd_pred"]
+        print(
+            f"  noise={noise:g}: FD={r['fd_pred']:.4f} "
+            f"(clean baseline {fd_base_clean:.4f})"
+        )
+    degrade = 100.0 * (fd_pred_at[DEGRADE_AT] - clean["fd_pred"]) / clean["fd_pred"]
+    tol = tolerance_sigma(levels, fd_preds, fd_base_clean)
 
     prof = profile(path)
     rows.append(
@@ -212,8 +230,8 @@ for (mtype, seq_len), (clean_fdg, fname, clean) in best.items():
             "fdg": clean_fdg,
             "pct_pos": 100.0 * (clean["fdg_per_sample"] > 0).mean(),
             "nll": clean["nll"],
-            "retain": retain,
-            "breakdown": bd,
+            "degrade": degrade,
+            "tolerance": tol,
         }
     )
 
@@ -234,8 +252,8 @@ COLS = [
     ("FD-gain", "fdg", "{:.4f}", ">8"),
     ("%>0", "pct_pos", "{:.1f}", ">5"),
     ("NLL", "nll", "{:.3f}", ">7"),
-    (f"Retain@{RETAIN_AT}σ %", "retain", "{:.0f}", ">11"),
-    ("Breakdown σ", "breakdown", "{:.2f}", ">11"),
+    (f"ΔFD@{DEGRADE_AT}σ %", "degrade", "{:+.0f}", ">10"),
+    ("Tol σ", "tolerance", "{:.2f}", ">6"),
 ]
 
 
@@ -243,7 +261,7 @@ def cell(r, key, fmt):
     v = r[key]
     if key == "throughput":
         v = v / 1e3  # samples/s -> k/s
-    if key == "breakdown" and v is None:
+    if key == "tolerance" and v is None:
         return f">{NOISE_LEVELS[-1]:g}"
     if isinstance(v, float) and np.isnan(v):
         return "n/a"
@@ -292,8 +310,9 @@ tbl = ax.table(
 tbl.auto_set_font_size(False)
 tbl.set_fontsize(9)
 tbl.scale(1, 1.4)
-# green = best per column (FD-gain / %>0 / retention / throughput high; the rest low)
-higher_better = {"fdg", "pct_pos", "retain", "throughput", "breakdown"}
+# green = best per column (FD-gain / %>0 / tolerance / throughput high; the rest low,
+# including ΔFD inflation where a smaller rise under noise is better)
+higher_better = {"fdg", "pct_pos", "tolerance", "throughput"}
 for c, (_, key, _, _) in enumerate(COLS):
     if key in ("arch", "seq", "ckpt"):
         continue
