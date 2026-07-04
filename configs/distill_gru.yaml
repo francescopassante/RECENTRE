@@ -10,11 +10,16 @@ output_dir: checkpoints/distill
 
 model:                 # the student (same head contract as every architecture)
   type: gru
-  input_dim: 6
+  input_dim: 18        # pos(6) + velocity(6) + acceleration(6), like the top GRUs
   output_dim: 6
   hidden_dim: 128
   num_layers: 2
   dropout: 0.1
+
+data:                  # student-only overrides; tasks/seq_len/split come from the teacher
+  add_velocity: true
+  add_acceleration: true
+  neg_augmentation: true
 
 train:
   loss: gaussian_nll   # hard-target base loss (kept for reference; distill uses NLL)

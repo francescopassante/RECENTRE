@@ -60,7 +60,23 @@ teacher_path = config["teacher"]
 print(f"Loading teacher {teacher_path}...")
 teacher_ckpt = torch.load(teacher_path, map_location=device, weights_only=False)
 teacher_config = teacher_ckpt["config"]
-data_config = teacher_config["data"]  # the split is defined by the teacher
+teacher_in = teacher_config["model"]["input_dim"]
+
+# The split (tasks, sequence_length, patients, mu/sigma) is fixed by the teacher
+# so the windows/targets align for distillation. But the student may use its own
+# input features (velocity/acceleration) and augmentation: those are just extra
+# input channels the teacher never sees. Channels are ordered [pos6, vel6, acc6],
+# so the teacher's pos-only input is the prefix x[..., :teacher_in]. Only the
+# feature/augmentation/batch knobs are overridable; tasks/seq_len/split are not.
+data_config = dict(teacher_config["data"])
+for k in ("add_velocity", "add_acceleration", "neg_augmentation",
+          "time_augmentation", "batch_size"):
+    if k in config.get("data", {}):
+        data_config[k] = config["data"][k]
+assert teacher_in <= student_model_config["input_dim"], (
+    "teacher input channels must be a prefix of the student's "
+    "(distillation feeds the teacher x[..., :teacher_in])"
+)
 
 teacher = build_model(teacher_config["model"]).to(device)
 teacher.load_state_dict(teacher_ckpt["model_state"])
@@ -130,6 +146,23 @@ teacher.fc_mean.register_forward_hook(_make_hook("teacher"))
 student.fc_mean.register_forward_hook(_make_hook("student"))
 
 
+class InputSlice(nn.Module):
+    """Feed a model only its first `n` input channels. Lets a pos-only teacher
+    run on the student's pos+velocity+acceleration windows (channels are ordered
+    [pos, vel, acc]). Also used so evaluate() slices the teacher correctly."""
+
+    def __init__(self, model, n):
+        super().__init__()
+        self.model = model
+        self.n = n
+
+    def forward(self, x):
+        return self.model(x[..., : self.n])
+
+
+teacher_fwd = InputSlice(teacher, teacher_in)
+
+
 def gaussian_kl(mu_t, var_t, mu_s, var_s, eps=1e-6):
     """KL( N(mu_t, var_t) || N(mu_s, var_s) ), averaged over batch and dims.
     Mean-seeking direction: drives the student mean/var toward the teacher's."""
@@ -190,7 +223,7 @@ for epoch in pbar:
         x, y = x.to(device), y.to(device)
 
         with torch.no_grad():
-            mean_t, var_t = teacher(x)
+            mean_t, var_t = teacher_fwd(x)  # teacher sees only its pos channels
             feat_t = _feats["teacher"]
 
         mean_s, var_s = student(x)
@@ -258,7 +291,7 @@ def mean_fdg(model):
     return float(np.mean((r["fd_base"] - r["fd_pred"]) / (r["fd_base"] + 1e-6)))
 
 
-teacher_fdg = mean_fdg(teacher)
+teacher_fdg = mean_fdg(teacher_fwd)
 student_fdg = mean_fdg(student)
 print(
     f"\ntest FD-gain  |  teacher {teacher_fdg:.4f}  student {student_fdg:.4f}  "
