@@ -1,0 +1,32 @@
+# Distill the seq-128 conformer teacher (best FD-gain, 0.2114) into a cheap GRU
+# student. The GRU is the efficiency frontier of the benchmark (~0.04 MFLOPs,
+# 0.6 ms/frame, 164 k/s) but trails the conformer by ~7.4% FD-gain; the goal is
+# to close that gap and land a model that Pareto-dominates the table.
+#
+# The split (train/val/test ids + mu/sigma + sequence_length) is taken from the
+# teacher checkpoint, so the student is directly comparable to the benchmark GRU.
+teacher: generalist/conformer_R+M+LvR+M+L_beta0.5_ep100.pth
+output_dir: checkpoints/distill
+
+model:                 # the student (same head contract as every architecture)
+  type: gru
+  input_dim: 6
+  output_dim: 6
+  hidden_dim: 128
+  num_layers: 2
+  dropout: 0.1
+
+train:
+  loss: gaussian_nll   # hard-target base loss (kept for reference; distill uses NLL)
+  beta: 0.5            # FD-gain weight in the hard-target term
+  epochs: 100
+  patience: 30
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+
+distill:
+  lambda_task: 1.0     # weight on the unbiased hard target (GaussianNLL - beta*fd_gain)
+  alpha_out: 1.0       # output distillation: Gaussian KL(teacher || student) on mean+var
+  alpha_feat: 1.0      # penultimate-feature distillation: projected (128->64) MSE
+  temperature: 1.0     # >1 softens the teacher variance in the output KL
+  feat_normalize: true # per-sample standardize features before the MSE (scale-free)
