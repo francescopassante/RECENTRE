@@ -74,17 +74,22 @@ def fit(
             fd_pred = fd(mean, y, mu, sigma)
             fdg = fd_gain(fd_base, fd_pred)
 
-            loss = base_loss - beta * fdg.mean()
+            # NOTE: use a distinct name (not `loss`) so we don't clobber the
+            # `loss` string parameter -- otherwise the `loss == "gaussian_nll"`
+            # check above silently becomes False on batch 2 onward (tensor vs
+            # str) and training falls back to MSE, leaving the variance head
+            # untrained.
+            total_loss = base_loss - beta * fdg.mean()
 
             # physics-informed motion-smoothness term (jerk on the step-2 lattice)
             if gamma > 0:
-                loss = loss + gamma * jerk_penalty(mean, x)
+                total_loss = total_loss + gamma * jerk_penalty(mean, x)
 
             # add L2SP if finetuning
             if reference is not None and lambda_l2sp > 0:
-                loss = loss + lambda_l2sp * l2sp(model, reference)
+                total_loss = total_loss + lambda_l2sp * l2sp(model, reference)
 
-            loss.backward()
+            total_loss.backward()
             optimizer.step()
 
             bs = y.size(0)
