@@ -61,11 +61,10 @@ def fdg(f):
     fps, fbs = [], []
     for task in parse_task(config["data"]["test_task"]):
         dd = np.load(f"datasets/{task}_dict.npy", allow_pickle=True).item()
-        data = (np.array([dd[pid] for pid in test_ids]) - mu) / sigma
-        vs, as_ = ckpt.get("feat_std", {}).get(task, (None, None))
+        data = np.array([dd[pid] for pid in test_ids])
         ds = TimeSeriesDataset(
             data, test_ids, sequence_length=seq_len, device=device,
-            add_velocity=add_vel, add_acceleration=add_acc, vel_std=vs, acc_std=as_,
+            add_velocity=add_vel, add_acceleration=add_acc, mu=mu, sigma=sigma,
         )
         out = evaluate(model, GPUBatchLoader(ds, batch_size=1024, shuffle=False),
                        mu, sigma, device)

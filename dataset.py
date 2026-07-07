@@ -8,6 +8,31 @@ def parse_task(task_string):
     return task_string.split("+") if "+" in task_string else [task_string]
 
 
+def build_features(pos, add_velocity=False, add_acceleration=False):
+    """Concatenate velocity/acceleration channels onto raw position frames.
+
+    `pos` is [N, T, 6]. Differences are taken with step 2 (x[t]-x[t-2]) so they
+    only use frames the model actually sees, not the extra frames in between.
+    Velocity is padded with 2 leading zeros and acceleration with 4, so every
+    channel has length T. Returns [N, T, C] with C in {6, 12, 18}. The output is
+    un-normalized: the caller z-scores every channel with a single per-channel
+    mu/sigma (positions, velocity and acceleration are all treated the same way).
+    """
+    extra = []
+    if add_velocity:
+        # Compute vel such that v[0] = x[2] - x[0]
+        vel = pos[:, 2:, :] - pos[:, :-2, :]  # [N, T-2, 6]
+        # Pad 2 zeros, now v[0] = 0, v[1]= 0, v[2] = x[2] - x[0]
+        vel = torch.cat([torch.zeros_like(vel[:, :2, :]), vel], dim=1)  # [N, T, 6]
+        extra.append(vel)
+    if add_acceleration:
+        # second difference: a[t] = (x[t] - x[t-2]) - (x[t-2] - x[t-4])
+        acc = pos[:, 4:, :] - 2 * pos[:, 2:-2, :] + pos[:, :-4, :]  # [N, T-4, 6]
+        acc = torch.cat([torch.zeros_like(acc[:, :4, :]), acc], dim=1)  # [N, T, 6]
+        extra.append(acc)
+    return torch.cat([pos] + extra, dim=2)  # [N, T, 6/12/18]
+
+
 class TimeSeriesDataset(Dataset):
 
     def __init__(
@@ -20,12 +45,13 @@ class TimeSeriesDataset(Dataset):
         neg_augmentation=False,
         add_velocity=False,
         add_acceleration=False,
-        vel_std=None,
-        acc_std=None,
+        mu=None,
+        sigma=None,
     ):
+        # `data` is RAW positions [N, T, 6]. Augmentation happens on positions
+        # first, then velocity/acceleration are derived from the (possibly
+        # flipped/negated) positions, so the derived channels stay consistent.
         self.data = torch.from_numpy(data).to(device=device, dtype=torch.float32)
-        self.vel_std = vel_std
-        self.acc_std = acc_std
         if time_augmentation == True:
             data_rev = self.data.flip(1)
             self.data = torch.cat([self.data, data_rev], dim=0)
@@ -36,39 +62,23 @@ class TimeSeriesDataset(Dataset):
             data_neg = -self.data
             self.data = torch.cat([self.data, data_neg], dim=0)
             self.ids = np.concatenate([self.ids, self.ids])
-        if add_velocity or add_acceleration:
-            # [N, T, 12] ( if vel) or [N, T, 18] (if vel+acc).
-            # Differences are taken with step 2 (x[t]-x[t-2]),
-            # so they only use frames that the model sees, not the
-            # extra frames in between.
-            pos = self.data  # [N, T, 6]
 
-            # extra holds the velocity and acceleration channels
-            extra = []
-            if add_velocity:
-                # Compute vel such that v[0] = x[2] - x[0]
-                vel = pos[:, 2:, :] - pos[:, :-2, :]  # [N, T-2, 6]
-                # Pad 2 zeros, now v[0] = 0, v[1]= 0, v[2] = x[2] - x[0]
-                vel = torch.cat(
-                    [torch.zeros_like(vel[:, :2, :]), vel], dim=1
-                )  # [N, T, 6]
-                if vel_std is None:
-                    vel_std = vel.std(dim=(0, 1), keepdim=True) + 1e-6  # per-dim scale
-                self.vel_std = vel_std
-                extra.append(vel / vel_std.to(vel.device))
-            if add_acceleration:
-                # second difference: a[t] = (x[t] - x[t-2]) - (x[t-2] - x[t-4])
-                acc = (
-                    pos[:, 4:, :] - 2 * pos[:, 2:-2, :] + pos[:, :-4, :]
-                )  # [N, T-4, 6]
-                acc = torch.cat(
-                    [torch.zeros_like(acc[:, :4, :]), acc], dim=1
-                )  #  [N, T, 6]
-                if acc_std is None:
-                    acc_std = acc.std(dim=(0, 1), keepdim=True) + 1e-6  # per-dim scale
-                self.acc_std = acc_std
-                extra.append(acc / acc_std.to(acc.device))
-            self.data = torch.cat([pos] + extra, dim=2)  # [N, T, 6/12/18]
+        feats = build_features(self.data, add_velocity, add_acceleration)  # [N,T,C]
+
+        # Single per-channel z-score for every channel. `mu`/`sigma` (length C)
+        # normally come from split_data (computed once on the training set,
+        # pooled across tasks). If not supplied, compute them from this dataset
+        # and expose them (used by per-patient fine-tuning: the train split
+        # computes them and propagates to its own val/test splits).
+        if mu is None or sigma is None:
+            mu = feats.mean(dim=(0, 1), keepdim=True)
+            sigma = feats.std(dim=(0, 1), keepdim=True, correction=0) + 1e-6
+        else:
+            mu = torch.as_tensor(mu, dtype=torch.float32, device=feats.device)
+            sigma = torch.as_tensor(sigma, dtype=torch.float32, device=feats.device)
+        self.mu, self.sigma = mu, sigma
+        self.data = (feats - mu) / sigma
+
         self.time_span = sequence_length * 2
         self.N, self.T, self.D = self.data.shape
 
@@ -265,20 +275,23 @@ def split_data(
             task: stack(task_dict[task], split_ids) for task in task_dict
         }
 
-    # To compute the total mean, collapse [N_tr, T_task, 6] -> [N_tr * T_task, 6] and concatenate tasks
-    # -> [N_tr*T_R + N_tr*T_M + N_tr*T_L, 6] -> mean -> [6]
-    train_frames = np.concatenate(
-        [arr.reshape(-1, 6) for arr in splits["train"].values()], axis=0
-    )
-
-    mu = train_frames.mean(axis=0)  # shape [6]
-    sigma = train_frames.std(axis=0)  # shape [6]
-    for split in splits.values():
-        for task in split:
-            split[task] = (split[task] - mu) / sigma
+    # Single per-channel mu/sigma over the training set, pooled across tasks and
+    # shared by positions, velocity and acceleration alike (no separate feat_std).
+    # Build the full feature tensor per task, collapse [N_tr, T_task, C] ->
+    # [N_tr * T_task, C], concatenate tasks, then mean/std -> [C] (C in {6,12,18}).
+    train_feat_frames = []
+    for arr in splits["train"].values():
+        pos = torch.from_numpy(arr).to(dtype=torch.float32)  # [N_tr, T_task, 6]
+        f = build_features(pos, add_velocity, add_acceleration)  # [N_tr, T_task, C]
+        train_feat_frames.append(f.reshape(-1, f.shape[-1]))
+    all_feats = torch.cat(train_feat_frames, dim=0)
+    mu = all_feats.mean(dim=0).numpy()  # shape [C]
+    # correction=0 -> population std, matching the previous numpy .std() behaviour
+    sigma = (all_feats.std(dim=0, correction=0) + 1e-6).numpy()  # shape [C]
 
     # keep the whole dataset on GPU so GPUBatchLoader can gather
-    # each batch there without per-batch host->device transfers
+    # each batch there without per-batch host->device transfers. Datasets receive
+    # RAW positions and the shared mu/sigma, and normalize their features internally.
     train_datasets = [
         TimeSeriesDataset(
             splits["train"][task],
@@ -289,15 +302,11 @@ def split_data(
             neg_augmentation=neg_augmentation,
             add_velocity=add_velocity,
             add_acceleration=add_acceleration,
+            mu=mu,
+            sigma=sigma,
         )
         for task in splits["train"]
     ]
-
-    # Use velocity and acceleration sigmas of training set to normalize.
-    # mean is already 0 because motion is normalized.
-    feat_std = {}
-    for task, ds in zip(splits["train"], train_datasets):
-        feat_std[task] = (ds.vel_std, ds.acc_std)
 
     val_datasets = [
         TimeSeriesDataset(
@@ -309,8 +318,8 @@ def split_data(
             neg_augmentation=False,
             add_velocity=add_velocity,
             add_acceleration=add_acceleration,
-            vel_std=feat_std.get(task, (None, None))[0],
-            acc_std=feat_std.get(task, (None, None))[1],
+            mu=mu,
+            sigma=sigma,
         )
         for task in splits["val"]
     ]
@@ -324,8 +333,8 @@ def split_data(
             neg_augmentation=False,
             add_velocity=add_velocity,
             add_acceleration=add_acceleration,
-            vel_std=feat_std.get(task, (None, None))[0],
-            acc_std=feat_std.get(task, (None, None))[1],
+            mu=mu,
+            sigma=sigma,
         )
         for task in splits["test"]
     ]
@@ -353,5 +362,4 @@ def split_data(
         train_ids,
         val_ids,
         test_ids,
-        feat_std,
     )

@@ -40,8 +40,11 @@ def jerk_penalty(pred, x):
 
 def evaluate(model, loader, mu, sigma, device, sigma_threshold=None, noise=None):
     model.eval()
-    mu = torch.tensor(mu, dtype=torch.float32, device=device)
-    sigma = torch.tensor(sigma, dtype=torch.float32, device=device)
+    # mu/sigma cover all feature channels (positions + velocity/acceleration);
+    # everything denormalized here (predictions, targets, baseline) is
+    # position-space, so keep only the first 6 (position) channels.
+    mu = torch.tensor(mu, dtype=torch.float32, device=device)[:6]
+    sigma = torch.tensor(sigma, dtype=torch.float32, device=device)[:6]
     if sigma_threshold is not None:
         sigma_threshold = torch.tensor(
             sigma_threshold, dtype=torch.float32, device=device
