@@ -238,9 +238,9 @@ if __name__ == "__main__":
     )
 
     print("\n" + "=" * 56)
-    print(f"{'policy':<28}{'mean FD_fd_gain':>14}{'aggregate':>12}")
-    for name, g, a in rows:
-        print(f"{name:<28}{g:>14.4f}{a:>12.4f}")
+    print(f"{'policy':<28}{'mean FD_fd_gain':>14}")
+    for name, g in rows:
+        print(f"{name:<28}{g:>14.4f}")
     print("=" * 56)
 
     print(
