@@ -41,15 +41,24 @@ for gamma in GAMMAS:
         yaml.safe_dump(config, f)
 
     print(f"\n=== training gamma={gamma} ===")
-    result = subprocess.run(
-        [sys.executable, "train.py", config_path], capture_output=True, text=True
+    # stream train.py's output live (tqdm progress bar included) instead of
+    # buffering it until the process exits
+    proc = subprocess.Popen(
+        [sys.executable, "train.py", config_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
     )
-    print(result.stdout)
-    if result.returncode != 0:
-        print(result.stderr)
+    lines = []
+    for line in proc.stdout:
+        print(line, end="")
+        lines.append(line)
+    proc.wait()
+    if proc.returncode != 0:
         raise RuntimeError(f"train.py failed for gamma={gamma}")
 
-    saved_line = [l for l in result.stdout.splitlines() if l.startswith("saved ")][-1]
+    saved_line = [l for l in lines if l.startswith("saved ")][-1]
     checkpoint_paths[gamma] = saved_line.split("saved ")[1].split("  (best epoch")[0]
 
 """
