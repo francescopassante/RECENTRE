@@ -93,7 +93,7 @@ def collect(ids):
                 [pred[n] - base for n in EXPERTS] + [std[n] for n in EXPERTS],
                 axis=1,
             )
-        )  # [[N*wpp, 6], [N*wpp, 6], ..., [N*wpp], [N*wpp], ...] -> [N*wpp, n_exp*7]
+        )  # [[N*wpp, 6], [N*wpp, 6], ..., [N*wpp, 6], [N*wpp, 6], ...] -> [N*wpp, n_exp*12]
         ys.append(y)
         bases.append(base)
 
@@ -131,7 +131,7 @@ def blend(router, X, E):
 def train_router(X, E, y, tr_idx, val_idx, epochs=200, bs=16384):
     print(X.shape, E.shape)
     """Minimize mean FD; select on the held-out val set"""
-    # X.shape = (N*wpp, n_exp*7), E.shape = (N*wpp, n_exp + 1, 6)
+    # X.shape = (N*wpp, n_exp*12), E.shape = (N*wpp, n_exp + 1, 6)
     router = Router(X.shape[1], E.shape[1]).to(device)
     opt = torch.optim.Adam(router.parameters(), lr=1e-3, weight_decay=1e-4)
     best_fd, best_state = np.inf, None
@@ -224,7 +224,7 @@ if __name__ == "__main__":
 
     with torch.no_grad():
         pred_soft_t, w = blend(router, features_test_t, expert_preds_test_t)
-    rows.append(("soft router", *fd_gain(pred_soft_t.cpu().numpy())))
+    rows.append(("soft router", fd_gain(pred_soft_t.cpu().numpy())))
 
     # control: the router's average weights frozen and reused on every frame,
     # so any gap vs "soft router" is purely the per-frame routing (not the weights)
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     rows.append(
         (
             "fixed router-mean weights",
-            *fd_gain(pred_fixed_w),
+            fd_gain(pred_fixed_w),
         )
     )
 
