@@ -7,8 +7,9 @@ the routing; nothing here does that.
 
 A small MLP reads per-frame features_tr (each expert's residual pred-base and its
 predicted sigma) and emits softmax weights over the options;
-the blended prediction is trained to MINIMIZE FD directly. Experts stay frozen,
-so the router can always fall back on the best single one.
+the blended prediction is trained to MAXIMIZE FD_gain (over the previous-frame
+baseline) directly. Experts stay frozen, so the router can always fall back on
+the best single one.
 
 Discipline: router trained on val_ids, evaluated on test_ids (both unseen by
 every expert). 15% of val is held out for early stopping. All experts must
@@ -128,32 +129,39 @@ def blend(router, X, E):
     return (w.unsqueeze(-1) * E).sum(1), w
 
 
-def train_router(X, E, y, tr_idx, val_idx, epochs=200, bs=16384):
+def fd_gain(pred, y, fd_base):
+    """Per-frame FD_gain against the previous-frame baseline, matching metrics.fd_gain."""
+    return (fd_base - fd(pred, y)) / (fd_base + 1e-6)
+
+
+def train_router(X, E, y, base, tr_idx, val_idx, epochs=200, bs=16384):
     print(X.shape, E.shape)
-    """Minimize mean FD; select on the held-out val set"""
+    """Maximize mean FD_gain (vs. the previous-frame baseline); select on the held-out val set"""
     # X.shape = (N*wpp, n_exp*12), E.shape = (N*wpp, n_exp + 1, 6)
+    fd_base = fd(base, y)
     router = Router(X.shape[1], E.shape[1]).to(device)
     opt = torch.optim.Adam(router.parameters(), lr=1e-3, weight_decay=1e-4)
-    best_fd, best_state = np.inf, None
+    best_gain, best_state = -np.inf, None
     for epoch in range(epochs):
         router.train()
         order = tr_idx[torch.randperm(len(tr_idx), device=device)]
         for s in range(0, len(order), bs):
             idx = order[s : s + bs]
             opt.zero_grad()
-            fd(blend(router, X[idx], E[idx])[0], y[idx]).mean().backward()
+            pred = blend(router, X[idx], E[idx])[0]
+            gain = fd_gain(pred, y[idx], fd_base[idx])
+            (-gain.mean()).backward()
             opt.step()
         router.eval()
         with torch.no_grad():
-            val_fd = (
-                fd(blend(router, X[val_idx], E[val_idx])[0], y[val_idx]).mean().item()
-            )
-        if val_fd < best_fd:
-            best_fd = val_fd
+            pred_val = blend(router, X[val_idx], E[val_idx])[0]
+            val_gain = fd_gain(pred_val, y[val_idx], fd_base[val_idx]).mean().item()
+        if val_gain > best_gain:
+            best_gain = val_gain
             best_state = {k: v.clone() for k, v in router.state_dict().items()}
         if (epoch + 1) % 25 == 0:
             print(
-                f"  epoch {epoch+1:3d}  held-out FD {val_fd:.4f}  (best {best_fd:.4f})"
+                f"  epoch {epoch+1:3d}  held-out FD_gain {val_gain:.4f}  (best {best_gain:.4f})"
             )
     router.load_state_dict(best_state)
     return router.eval()
@@ -177,7 +185,7 @@ if __name__ == "__main__":
 
     print("exacting router-train (val) and router-eval (test) frames...")
     # Collects "features" = residuals and stds for all experts, baseline and true target y both for val and test ids.
-    features_tr, expert_preds_tr, y_tr, _ = collect(split["val_ids"])
+    features_tr, expert_preds_tr, y_tr, base_tr = collect(split["val_ids"])
     features_test, expert_preds_test, y_test, baseline_test = collect(split["test_ids"])
     print(f"  val {len(y_tr):,} frames, test {len(y_test):,} frames, options: {names}")
 
@@ -193,6 +201,7 @@ if __name__ == "__main__":
         expert_preds_tr, dtype=torch.float32, device=device
     )
     y_tr_t = torch.tensor(y_tr, dtype=torch.float32, device=device)
+    base_tr_t = torch.tensor(base_tr, dtype=torch.float32, device=device)
     expert_preds_test_t = torch.tensor(
         expert_preds_test, dtype=torch.float32, device=device
     )
@@ -202,29 +211,31 @@ if __name__ == "__main__":
     n_val = int(0.15 * len(perm))
     val_idx, tr_idx = perm[:n_val].to(device), perm[n_val:].to(device)
 
-    print("\ntraining soft router (objective = mean FD of the blend)...")
-    # Train router to minimize FD on the train frames, select the best over val frames
-    router = train_router(features_tr_t, expert_preds_tr_t, y_tr_t, tr_idx, val_idx)
+    print("\ntraining soft router (objective = mean FD_gain of the blend)...")
+    # Train router to maximize FD_gain on the train frames, select the best over val frames
+    router = train_router(
+        features_tr_t, expert_preds_tr_t, y_tr_t, base_tr_t, tr_idx, val_idx
+    )
 
-    fd_base = fd(baseline_test, y_test)
+    fd_base_test = fd(baseline_test, y_test)
 
-    def fd_gain(pred):
-        fd_pred = fd(pred, y_test)
-        return ((fd_base - fd_pred) / (fd_base + 1e-6)).mean()
+    def mean_fd_gain(pred):
+        return fd_gain(pred, y_test, fd_base_test).mean()
 
     n_exp = len(EXPERTS)
     rows = [
-        (f"{names[k]} (single)", fd_gain(expert_preds_test[:, k])) for k in range(n_exp)
+        (f"{names[k]} (single)", mean_fd_gain(expert_preds_test[:, k]))
+        for k in range(n_exp)
     ]
 
     # control: does per-frame weighting beat a fixed average?
     rows.append(
-        (f"fixed mean of {n_exp}", fd_gain(expert_preds_test[:, :n_exp].mean(1)))
+        (f"fixed mean of {n_exp}", mean_fd_gain(expert_preds_test[:, :n_exp].mean(1)))
     )
 
     with torch.no_grad():
         pred_soft_t, w = blend(router, features_test_t, expert_preds_test_t)
-    rows.append(("soft router", fd_gain(pred_soft_t.cpu().numpy())))
+    rows.append(("soft router", mean_fd_gain(pred_soft_t.cpu().numpy())))
 
     # control: the router's average weights frozen and reused on every frame,
     # so any gap vs "soft router" is purely the per-frame routing (not the weights)
@@ -233,12 +244,12 @@ if __name__ == "__main__":
     rows.append(
         (
             "fixed router-mean weights",
-            fd_gain(pred_fixed_w),
+            mean_fd_gain(pred_fixed_w),
         )
     )
 
     print("\n" + "=" * 56)
-    print(f"{'policy':<28}{'mean FD_fd_gain':>14}")
+    print(f"{'policy':<28}{'mean FD_gain':>14}")
     for name, g in rows:
         print(f"{name:<28}{g:>14.4f}")
     print("=" * 56)
