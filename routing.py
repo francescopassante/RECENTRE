@@ -30,8 +30,7 @@ def fd(pred, y):
 
 
 def expert_outputs(path, ids, task):
-    """One expert's per-window (pred, std), each [P*wpp, 6] in physical units,
-    plus ts = the first predictable target-frame index + 1."""
+    """One expert's per-window (pred, std), each [N*win_per_patient, 6] in physical units, and time span"""
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cfg = ckpt["config"]["data"]
     mu, sigma = ckpt["mu"], ckpt["sigma"]
@@ -64,8 +63,9 @@ def expert_outputs(path, ids, task):
 
 
 def collect(ids):
-    """Build the frame set for a group of patients: per-frame features_tr X, the K
-    routable options E (experts + baseline), the target y, and the baseline."""
+    """
+    Collect features (residuals and stds) and options (expert predictions + baseline) for all tasks for the given ids
+    """
     feats, options, ys, bases = [], [], [], []
     for task in TASKS:
         raw = np.array(
@@ -130,9 +130,7 @@ def blend(router, X, E):
 def train_router(X, E, y, tr, es, epochs=200, bs=16384):
     """Minimize the blend's mean FD; select on the held-out slice es."""
     router = Router(X.shape[1], E.shape[1]).to(device)
-    opt = torch.optim.Adam(
-        router.paramexpert_preds_testrs(), lr=1e-3, weight_decay=1e-4
-    )
+    opt = torch.optim.Adam(router.parameters(), lr=1e-3, weight_decay=1e-4)
     best_fd, best_state = np.inf, None
     for epoch in range(epochs):
         router.train()
@@ -174,23 +172,26 @@ if __name__ == "__main__":
     print("exacting router-train (val) and router-eval (test) frames...")
     features_tr, expert_preds_tr, y_tr, _ = collect(split["val_ids"])
     features_test, expert_preds_test, y_test, baseline_test = collect(split["test_ids"])
-    K = expert_preds_tr.shape[1]
     print(f"  val {len(y_tr):,} frames, test {len(y_test):,} frames, options: {names}")
 
-    # standardize features_tr on val, then move everything to the device
+    # standardize features on val, then move everything to device
     fmu, fstd = features_tr.mean(0), features_tr.std(0) + 1e-6
-    to_t = lambda a: torch.tensor(a, dtype=torch.float32, device=device)
-    features_tr_t, features_test_t = to_t((features_tr - fmu) / fstd), to_t(
-        (features_test - fmu) / fstd
+    features_tr_t = torch.tensor(
+        (features_tr - fmu) / fstd, dtype=torch.float32, device=device
     )
-    expert_preds_tr_t, y_tr_t, expert_preds_test_t = (
-        to_t(expert_preds_tr),
-        to_t(y_tr),
-        to_t(expert_preds_test),
+    features_test_t = torch.tensor(
+        (features_test - fmu) / fstd, dtype=torch.float32, device=device
+    )
+    expert_preds_tr_t = torch.tensor(
+        expert_preds_tr, dtype=torch.float32, device=device
+    )
+    y_tr_t = torch.tensor(y_tr, dtype=torch.float32, device=device)
+    expert_preds_test_t = torch.tensor(
+        expert_preds_test, dtype=torch.float32, device=device
     )
 
     # hold out 15% of val frames for early stopping
-    perm = torch.randperm(len(y_tr), generator=torch.Generator().manual_seed(0))
+    perm = torch.randperm(len(y_tr))
     n_es = int(0.15 * len(perm))
     es_idx, tr_idx = perm[:n_es].to(device), perm[n_es:].to(device)
 
@@ -209,18 +210,12 @@ if __name__ == "__main__":
         (f"{names[k]} (single)", *gain(expert_preds_test[:, k])) for k in range(n_exp)
     ]
 
-    # oracle: per-frame lowest-FD option (peeks at the target -> upper bound)
-    fde = np.stack([fd(expert_preds_test[:, k], y_test) for k in range(K)], axis=1)
-    oracle = expert_preds_test[np.arange(len(y_test)), fde.argmin(1)]
-    rows.append(("ORACLE best-of-all", *gain(oracle)))
-
     # control: does per-frame weighting beat a fixed average?
     rows.append((f"fixed mean of {n_exp}", *gain(expert_preds_test[:, :n_exp].mean(1))))
 
     with torch.no_grad():
         pred_soft_t, w = blend(router, features_test_t, expert_preds_test_t)
-    soft = gain(pred_soft_t.cpu().numpy())
-    rows.append(("SOFT ROUTER", *soft))
+    rows.append(("soft router", *gain(pred_soft_t.cpu().numpy())))
 
     print("\n" + "=" * 56)
     print(f"{'policy':<28}{'mean FD_gain':>14}{'aggregate':>12}")
@@ -228,13 +223,6 @@ if __name__ == "__main__":
         print(f"{name:<28}{g:>14.4f}{a:>12.4f}")
     print("=" * 56)
 
-    best = max((r for r in rows if "single" in r[0]), key=lambda r: r[2])
-    orc = next(r for r in rows if r[0].startswith("ORACLE"))
-    captured = (soft[1] - best[2]) / (orc[2] - best[2] + 1e-9)
-    print(
-        f"best single {best[0].split()[0]} agg {best[2]:.4f}  |  "
-        f"oracle {orc[2]:.4f}  |  router captures {100*captured:.1f}% of headroom"
-    )
     wm = w.mean(0).cpu().numpy()
     print(
         "router weight per option: "

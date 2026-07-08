@@ -9,14 +9,12 @@ def parse_task(task_string):
 
 
 def build_features(pos, add_velocity=False, add_acceleration=False):
-    """Concatenate velocity/acceleration channels onto raw position frames.
+    """Concatenate velocity/acceleration channels with position.
 
     `pos` is [N, T, 6]. Differences are taken with step 2 (x[t]-x[t-2]) so they
-    only use frames the model actually sees, not the extra frames in between.
+    only use frames available to the model, not the extra frames in between.
     Velocity is padded with 2 leading zeros and acceleration with 4, so every
-    channel has length T. Returns [N, T, C] with C in {6, 12, 18}. The output is
-    un-normalized: the caller z-scores every channel with a single per-channel
-    mu/sigma (positions, velocity and acceleration are all treated the same way).
+    channel has the same length T.
     """
     extra = []
     if add_velocity:
@@ -65,11 +63,7 @@ class TimeSeriesDataset(Dataset):
 
         feats = build_features(self.data, add_velocity, add_acceleration)  # [N,T,C]
 
-        # Single per-channel z-score for every channel. `mu`/`sigma` (length C)
-        # normally come from split_data (computed once on the training set,
-        # pooled across tasks). If not supplied, compute them from this dataset
-        # and expose them (used by per-patient fine-tuning: the train split
-        # computes them and propagates to its own val/test splits).
+        # Per-channel normalization if mu/sigma are not passed.
         if mu is None or sigma is None:
             mu = feats.mean(dim=(0, 1), keepdim=True)
             sigma = feats.std(dim=(0, 1), keepdim=True, correction=0) + 1e-6
@@ -275,10 +269,9 @@ def split_data(
             task: stack(task_dict[task], split_ids) for task in task_dict
         }
 
-    # Single per-channel mu/sigma over the training set, pooled across tasks and
-    # shared by positions, velocity and acceleration alike (no separate feat_std).
+    # Normalize with mu/sigma from training set, pooled across tasks.
     # Build the full feature tensor per task, collapse [N_tr, T_task, C] ->
-    # [N_tr * T_task, C], concatenate tasks, then mean/std -> [C] (C in {6,12,18}).
+    # [N_tr * T_task, C], concatenate tasks, then mean/std -> [C]
     train_feat_frames = []
     for arr in splits["train"].values():
         pos = torch.from_numpy(arr).to(dtype=torch.float32)  # [N_tr, T_task, 6]
@@ -286,7 +279,6 @@ def split_data(
         train_feat_frames.append(f.reshape(-1, f.shape[-1]))
     all_feats = torch.cat(train_feat_frames, dim=0)
     mu = all_feats.mean(dim=0).numpy()  # shape [C]
-    # correction=0 -> population std, matching the previous numpy .std() behaviour
     sigma = (all_feats.std(dim=0, correction=0) + 1e-6).numpy()  # shape [C]
 
     # keep the whole dataset on GPU so GPUBatchLoader can gather
