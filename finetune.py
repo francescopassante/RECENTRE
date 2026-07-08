@@ -29,8 +29,9 @@ def summarize(out, sigma):
     fb, fp = out["fd_base"], out["fd_pred"]
     err = out["pred"] - out["true"]  # physical units, no ×50
     return {
-        # normalized-space MSE (matches the MSE the loss is trained on)
-        "mse": ((err / np.array(sigma)) ** 2).mean(),
+        # normalized-space MSE (matches the MSE the loss is trained on); sigma
+        # spans all feature channels, error is position-space -> first 6 only
+        "mse": ((err / np.array(sigma)[:6]) ** 2).mean(),
         "fdg": ((fb - fp) / (fb + 1e-6)).mean(),
         "fd_pred": fp.mean(),
         "fd_base": fb.mean(),
@@ -42,15 +43,16 @@ def summarize(out, sigma):
 
 
 def build_patient_split(
-    series_norm, patient_id, sequence_length, batch_size, split_percentages, device,
-    add_velocity=False, add_acceleration=False,
+    series, patient_id, sequence_length, batch_size, split_percentages, device,
+    mu, sigma, add_velocity=False, add_acceleration=False,
 ):
-    """Chronological train/val/test split of one patient's normalized series.
+    """Chronological train/val/test split of one patient's raw series.
 
     Splits raw frames into three disjoint arrays before windowing, so no
-    window straddles a boundary — no leakage across splits.
+    window straddles a boundary — no leakage across splits. Every split is
+    normalized with the shared pretraining stats mu/sigma (per-channel z-score).
     """
-    total_len = series_norm.shape[0]
+    total_len = series.shape[0]
     train_frac, val_frac, _ = split_percentages
     train_len = int(round(train_frac * total_len))
     val_len = int(round(val_frac * total_len))
@@ -70,21 +72,17 @@ def build_patient_split(
         )
 
     raw_splits = {
-        "train": (series_norm[:train_len], True),
-        "val": (series_norm[train_len : train_len + val_len], False),
-        "test": (series_norm[train_len + val_len :], False),
+        "train": (series[:train_len], True),
+        "val": (series[train_len : train_len + val_len], False),
+        "test": (series[train_len + val_len :], False),
     }
     loaders, sizes = {}, {}
-    vel_std = acc_std = None
     for name, (s, shuffle) in raw_splits.items():
         ds = TimeSeriesDataset(
             s[None, :, :], [patient_id], sequence_length=sequence_length, device=device,
             add_velocity=add_velocity, add_acceleration=add_acceleration,
-            vel_std=vel_std, acc_std=acc_std,
+            mu=mu, sigma=sigma,
         )
-        # propagate scales computed on train to val/test so they match
-        if name == "train":
-            vel_std, acc_std = ds.vel_std, ds.acc_std
         loaders[name] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
         sizes[name] = len(ds)
     return loaders, sizes
@@ -151,8 +149,9 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
     data_config = pretrained["config"]["data"]
     mu, sigma = pretrained["mu"], pretrained["sigma"]
 
-    # normalize with the pretraining-population stats (no per-patient leakage)
-    series = (task_dicts[task][patient_id] - mu) / sigma
+    # raw positions; the dataset normalizes every channel with the pretraining
+    # population stats mu/sigma (no per-patient leakage)
+    series = task_dicts[task][patient_id]
     # window length and feature flags must match what the checkpoint was trained
     # with; the checkpoint's own config wins over the finetune config
     seq_len = data_config.get("sequence_length", cfg.get("sequence_length", 10))
@@ -160,7 +159,7 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
     add_acceleration = data_config.get("add_acceleration", False)
     loaders, sizes = build_patient_split(
         series, patient_id, seq_len, cfg["batch_size"], cfg["split_percentages"], device,
-        add_velocity=add_velocity, add_acceleration=add_acceleration,
+        mu, sigma, add_velocity=add_velocity, add_acceleration=add_acceleration,
     )
 
     # BEFORE: the pretrained generalist on this patient's test split

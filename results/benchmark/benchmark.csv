@@ -1,0 +1,1 @@
+arch,seq,n_params,size_mb,flops_m,latency_ms,throughput,mean_fd,fdg,pct_pos,nll,retain,breakdown,ckpt

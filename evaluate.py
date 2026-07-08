@@ -63,13 +63,12 @@ test_dict = {
 }
 out_by_task = {}
 for task in test_tasks:
-    # only load patients in the test set, apply normalization from training set.
+    # only load patients in the test set (raw positions); the dataset applies
+    # the training-set normalization (mu/sigma) to every feature channel.
     data = np.array([test_dict[task][pid] for pid in test_ids])  # [patients, frames, 6]
-    data = (data - mu) / sigma
     seq_len = config["data"]["sequence_length"]
     add_velocity = config["data"].get("add_velocity", False)
     add_acceleration = config["data"].get("add_acceleration", False)
-    vel_std, acc_std = ckpt.get("feat_std", {}).get(task, (None, None))
     ds = TimeSeriesDataset(
         data,
         test_ids,
@@ -77,8 +76,8 @@ for task in test_tasks:
         device=device,
         add_velocity=add_velocity,
         add_acceleration=add_acceleration,
-        vel_std=vel_std,
-        acc_std=acc_std,
+        mu=mu,
+        sigma=sigma,
     )
     loader = GPUBatchLoader(ds, batch_size=1024, shuffle=False)
 

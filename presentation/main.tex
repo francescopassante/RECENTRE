@@ -50,7 +50,7 @@ Lots of efforts were put in the thesis and paper (\cite{}) to study different da
 We build on their findings (no substantial difference in performance among the different scenarios) by: 
 
 \begin{enumerate}
-    \item Developing a minimal, easy pipeline to choose training and testing tasks and choosing whether to use different splits of patients
+    \item Developing a minimal, simple pipeline to choose training and testing tasks and choosing whether to use different splits of patients
     \item Standardizing all results to the same scenario: train on all tasks (R+M+L) and test on all tasks (R+M+L), while keeping disjoint sets of patients to avoid any possible leakage
 \end{enumerate}
 
@@ -296,15 +296,17 @@ Next, we investigated whether data augmentation could be helpful for this projec
 \small
 \begin{tabular}{l c c c}
 \toprule
-Augmentation & FD\textsubscript{pred} & FD-gain & \% Frames $>$ base \\
+Augmentation & $FD_{pred}$ & $FD_{gain}$ & \% Frames $>$ base \\
 \midrule
-None & 0.143 & 9.7 & 73.0 \\
-Time-reversal & 0.146 & 7.8 & 70.9  \\
-Negation & 0.141 & 11.4 & 75.2  \\
-Both & 0.145 & 8.5 & 71.9  \\
+None & 0.143 & 0.097 & 73.0 \\
+Time-reversal & 0.146 & 0.078 & 70.9  \\
+Negation & 0.141 & 0.114 & 75.2  \\
+Both & 0.145 & 0.085 & 71.9  \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+From the empirical data in Table \ref{tab:augmentation} we find that, while time reversal augmentation degrades the performances on the (non augmented) test set, negation significantly improves them. From now on, we always train the models with negation-augmented data.
 
 
 
@@ -322,35 +324,51 @@ The TCN model showed remarkable performances, competitive with the original GRU 
 
 
 \subsection{Routing over experts}
+Inspired by MoE systems in modern LLMs, we decided to try combining different "experts", i.e. model architectures, to give a better overall frame-by-frame prediction. 
+Given the long training runs of the best (heavy) experts, we first chose to keep the already trained models and just train a global router. Clearly this doesn't let each architecture become an expert in a particular regime or type of input sequence, but it is still an interesting ensemble-like strategy.
+We chose four experts: the best mamba, conformer and GRU models (at sequence length 128), along with the baseline, and trained a router to predict coefficients to linearly combine the prediction of the four models. 
 
-Having trained several architectures, we asked whether they can be \emph{combined} rather than chosen between. The three strongest generalist models --- the best mamba, conformer and GRU --- make different errors on different frames, so a model that picks the right one frame-by-frame could in principle beat any single architecture. To quantify this, we first compute an \emph{oracle} upper bound: a clairvoyant router that, knowing the true target, selects on every frame the expert with the lowest framewise displacement (optionally also falling back to the previous-frame baseline). The oracle is not realizable --- it cheats by using the ground truth --- but it measures the headroom available to any routing scheme.
+The router is a small MLP that takes as input the per-frame experts' predictions and uncertainties and outputs softmax weights over the four models for the current frame. The router is trained to maximize $FD_{gain}$ with the three experts kept frozen. The router is trained on the validation patients and evaluated on the held-out test patients, both unseen by every expert (more precisely, $85\%$ of the validation patients are used for training, $15\%$ are for the actual validation (early stopping) and the test patients are for testing). Results are reported in Table~(\ref{tab:router}).
 
-We then train a realizable router: a small MLP that, from \emph{observable} features only (the experts' mutual disagreement, their predicted uncertainties $\sigma$, and the recent motion), outputs per-frame softmax weights over the three experts plus the previous-frame baseline. The blended prediction is trained end-to-end to directly minimize FD --- the true objective --- with the three experts kept frozen. The router is trained on the validation patients and evaluated on the held-out test patients, both unseen by every expert. Results are reported in Table~(\ref{tab:router}).
-
-\begin{table}[ht]
+\begin{table}[h]
 \centering
-\caption{Per-frame routing over the three strongest experts (mamba, conformer, GRU) plus the previous-frame baseline. Mean FD\textsubscript{gain} averages per frame; aggregate pools FD over all frames before taking the gain. Oracle rows are the (non-realizable) clairvoyant upper bound.}
-\label{tab:router}
-\small
-\begin{tabular}{l c c}
-\toprule
-Policy & mean FD\textsubscript{gain} & aggregate \\
+\begin{tabular}{lc}
+\hline
+Model & $FD_{gain}$ \\
+\hline
+Conformer (single) & 0.2159 \\
+Mamba (single) & 0.2020 \\
+GRU (single) & 0.1957 \\
 \midrule
-mamba (best single)        & 0.199 & 0.270 \\
-conformer (best single)    & 0.211 & 0.279 \\
-GRU (best single)          & 0.193 & 0.263 \\
-\midrule
-Oracle best-of-3           & 0.296 & 0.346 \\
-Oracle best-of-3 + base    & 0.349 & 0.368 \\
-\midrule
-Fixed mean of 3 experts    & 0.217 & 0.281 \\
-\textbf{Soft router}       & \textbf{0.221} & \textbf{0.289} \\
-Hard router (argmax)       & 0.214 & 0.288 \\
-\bottomrule
+Fixed mean & 0.2196 \\
+Soft router & 0.2238 \\
+Fixed router-mean weights & 0.2221 \\
+\hline
 \end{tabular}
+\caption{Routing performances on the test set}
+\label{tab:routing-fd-gain}
 \end{table}
 
-The learned soft router (aggregate $0.289$) beats both the best single model (conformer, $0.279$) and a static equal-weight average of the three experts ($0.281$), confirming that per-frame weighting extracts a small but real gain. However, it captures only $\sim 11\%$ of the oracle headroom: the clairvoyant ceiling ($0.368$) lies far above. The large oracle gap confirms that the experts are genuinely diverse --- they win on different frames --- but the realizable router cannot tell \emph{which} expert will win from the observable features, as that choice is largely driven by unpredictable per-frame noise. Inspecting the learned weights (conformer $56\%$, GRU $30\%$, mamba $13\%$, baseline $1\%$) shows the router behaves close to a static weighted average rather than a sharp per-frame switcher. We therefore regard the single best architecture, or a fixed ensemble, as the practical recommendation, with per-frame routing offering only marginal improvement.
+We see that the soft routing strategy found by the model does indeed improve performances. We also collected the average weights produced by the router for each model: mamba $16\%$ for the Mamba model, $61\%$ for the Conformer, $15\%$ for the GRU and $8\%$ for the baseline. We immediately see that all models are blended in, and better-performing models are given a larger weight on average. To evaluate the actual role of the per-frame router vs. a fixed linear combination of the models, we evaluated a fixed mean of the 3 best models ($33\%$ weight to each model) and a fixed mean of the best models where the weights are given by the previously mentioned averages. We see that active frame-by-frame routing is indeed the best option, although the best fixed linear combination achieves roughly the same performances.
+
+
+\subsection{Kinematical constraints}
+
+Since the task of interest is a physical motion prediction task, we investigated whether enforcing a kinematic prior could help the model find a better solution. Indeed, injecting symmetry priors or inductive biases into ML models is widely known to improve performance and/or efficiency in many applications (that's what geometrical deep learning is all about), e.g. enforcing SE(3) equivariance in mesh classification or gauge equivariance in lattice gauge theory models.
+For tasks that do not have an exact symmetry to enforce, an alternative approach is to inject the physical bias in the loss function. In our case, we studied whether a jerk penalty term in the loss could help the model explore more physically plausible solutions and thus lead to better optimization and generalization. We chose to use a jerk penalty because our data is rapidly fluctuating, so using velocity- or acceleration-related penalties probably wouldn't help. Jerk penalty is a bit more theoretically grounded, as it captures the muscles' ability to produce smooth changes in applied force, while still penalizing very rapid changes in movement.
+
+We added the term
+\begin{equation}
+    L_{jerk} = \gamma J(t)
+\end{equation}
+
+to the loss function, where the jerk $J(t)$ is computed via finite diffirences as:
+
+\begin{equation}
+    J(t) = a(t) - a(t-2) = x(t) - 3x(t-2) + 3x(t-4) - x(t-6)
+\end{equation}
+
+Where the 2-strided input is kept to avoid using in-between frames that the model never sees. We then swept $\gamma$ over many orders of magnitude to study its effect on test performances for the GRU model. The results are shown in Table \ref{tab:gamma_sweep}
 
 
 \section{Discussion}

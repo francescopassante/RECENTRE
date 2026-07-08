@@ -56,8 +56,7 @@ def eval_checkpoint(path):
     all_fd_pred, all_fd_base, all_deviation = [], [], []
     for task in test_tasks:
         data_dict = np.load(f"datasets/{task}_dict.npy", allow_pickle=True).item()
-        data = (np.array([data_dict[pid] for pid in test_ids]) - mu) / sigma
-        vel_std, acc_std = ckpt.get("feat_std", {}).get(task, (None, None))
+        data = np.array([data_dict[pid] for pid in test_ids])
         ds = TimeSeriesDataset(
             data,
             test_ids,
@@ -65,8 +64,8 @@ def eval_checkpoint(path):
             device=device,
             add_velocity=add_velocity,
             add_acceleration=add_acceleration,
-            vel_std=vel_std,
-            acc_std=acc_std,
+            mu=mu,
+            sigma=sigma,
         )
         loader = GPUBatchLoader(ds, batch_size=1024, shuffle=False)
         out = evaluate(model, loader, mu, sigma, device)
