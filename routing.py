@@ -157,9 +157,9 @@ def train_router(X, E, y, tr, es, epochs=200, bs=16384):
 if __name__ == "__main__":
 
     EXPERTS = {
-        "mamba": "checkpoints/generalist/mamba_R+M+LvR+M+L_beta0.5_ep100_5.pth",
-        "conformer": "checkpoints/generalist/conformer_R+M+LvR+M+L_beta0.5_ep100.pth",
-        "gru": "checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep150_5.pth",
+        "mamba": "checkpoints/generalist/mamba_R+M+LvR+M+L_beta0.5_ep200.pth",
+        "conformer": "checkpoints/generalist/conformer_R+M+LvR+M+L_beta0.5_ep200_3.pth",
+        "gru": "checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep200_3.pth",
     }
     TASKS = ["R", "M", "L"]
     device = get_device()
@@ -217,13 +217,23 @@ if __name__ == "__main__":
         pred_soft_t, w = blend(router, features_test_t, expert_preds_test_t)
     rows.append(("soft router", *gain(pred_soft_t.cpu().numpy())))
 
+    # control: the router's average weights frozen and reused on every frame,
+    # so any gap vs "soft router" is purely the per-frame routing (not the weights)
+    wm = w.mean(0).cpu().numpy()  # [K] mean weight per option over test frames
+    pred_fixed_w = (wm[None, :, None] * expert_preds_test).sum(1)
+    rows.append(
+        (
+            "fixed router-mean weights",
+            *gain(pred_fixed_w),
+        )
+    )
+
     print("\n" + "=" * 56)
     print(f"{'policy':<28}{'mean FD_gain':>14}{'aggregate':>12}")
     for name, g, a in rows:
         print(f"{name:<28}{g:>14.4f}{a:>12.4f}")
     print("=" * 56)
 
-    wm = w.mean(0).cpu().numpy()
     print(
         "router weight per option: "
         + "  ".join(f"{n} {100*v:.0f}%" for n, v in zip(names, wm))
