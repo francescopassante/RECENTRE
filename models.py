@@ -498,16 +498,23 @@ class DLinear(nn.Module):
         x_padded = torch.cat([front, x_t, end], dim=-1)
         
         trend = F.avg_pool1d(x_padded, kernel_size=self.kernel_size, stride=1) # for each three elements takes the mean, with stride=1 the output has the same lenght and is the global (trend) movement
-        season = x_t - trend # oscillations wrt trend, small scale 
+        season = x_t - trend # oscillations wrt trend, small scale
 
-        pred_trend = torch.zeros([B, self.C], device=x.device)
-        pred_season = torch.zeros([B, self.C], device=x.device)
-        pred_logvar = torch.zeros([B, self.C], device=x.device)
+        # stack each set of per-channel Linear(L->1) weights into one [C, L] matrix
+        # and run all channels as a single batched matmul instead of a Python loop
+        # of 3*C tiny kernels (same arithmetic; big win at batch=1 real-time latency)
+        def stack_linears(mods):
+            W = torch.stack([m.weight.squeeze(0) for m in mods])       # [C, L]
+            b = torch.stack([m.bias for m in mods]).squeeze(-1)        # [C]
+            return W, b
 
-        for c in range(self.C):
-            pred_trend[:, c] = self.trend_linears[c](trend[:, c, :]).squeeze(-1)
-            pred_season[:, c] = self.season_linears[c](season[:, c, :]).squeeze(-1)
-            pred_logvar[:, c] = self.logvar_linears[c](x_t[:, c, :]).squeeze(-1)
+        Wt, bt = stack_linears(self.trend_linears)
+        Ws, bs = stack_linears(self.season_linears)
+        Wv, bv = stack_linears(self.logvar_linears)
+
+        pred_trend = torch.einsum("bcl,cl->bc", trend, Wt) + bt
+        pred_season = torch.einsum("bcl,cl->bc", season, Ws) + bs
+        pred_logvar = torch.einsum("bcl,cl->bc", x_t, Wv) + bv
 
         mean_res = pred_trend + pred_season
         logvar = torch.clamp(pred_logvar, min=-10.0, max=10.0)
@@ -539,12 +546,16 @@ class NLinear(nn.Module):
         x_t = x.permute(0, 2, 1)  # [B, D, T]
         x_norm = x_t - x_t[:, :, -1:]  # subtract last frame per channel
 
-        pred_mean = torch.zeros([B, self.C], device=x.device)
-        pred_logvar = torch.zeros([B, self.C], device=x.device)
+        # stack the per-channel Linear(L->1) weights into one [C, L] matrix and
+        # run all channels as a single batched matmul instead of a Python loop
+        # of C tiny kernels (same arithmetic; big win at batch=1 real-time latency)
+        W_mean = torch.stack([lin.weight.squeeze(0) for lin in self.linears])          # [C, L]
+        b_mean = torch.stack([lin.bias for lin in self.linears]).squeeze(-1)           # [C]
+        W_lv = torch.stack([lin.weight.squeeze(0) for lin in self.logvar_linears])     # [C, L]
+        b_lv = torch.stack([lin.bias for lin in self.logvar_linears]).squeeze(-1)      # [C]
 
-        for c in range(self.C):
-            pred_mean[:, c] = self.linears[c](x_norm[:, c, :]).squeeze(-1)
-            pred_logvar[:, c] = self.logvar_linears[c](x_t[:, c, :]).squeeze(-1)
+        pred_mean = torch.einsum("bcl,cl->bc", x_norm, W_mean) + b_mean
+        pred_logvar = torch.einsum("bcl,cl->bc", x_t, W_lv) + b_lv
 
         logvar = torch.clamp(pred_logvar, min=-10.0, max=10.0)
         # keep only the 6 position channels (extra channels exist with velocity input)

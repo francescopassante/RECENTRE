@@ -48,10 +48,13 @@ def run_eval(checkpoint_path, device, group_field=None, noise=None, progress=Fal
     nll_sum = 0.0
     for task in test_tasks:
         task_dict = np.load(f"datasets/{task}_dict.npy", allow_pickle=True).item()
-        data = (np.array([task_dict[pid] for pid in test_ids]) - mu) / sigma
+        data = np.array([task_dict[pid] for pid in test_ids])
         seq_len = config["data"].get("sequence_length", 10)
         loader = GPUBatchLoader(
-            TimeSeriesDataset(data, test_ids, sequence_length=seq_len, device=device),
+            TimeSeriesDataset(
+                data, test_ids, sequence_length=seq_len, device=device,
+                mu=mu, sigma=sigma,
+            ),
             batch_size=1024,
             shuffle=False,
         )

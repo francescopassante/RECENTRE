@@ -39,8 +39,10 @@ def fit(
     Early stopping and model selection use validation FD-gain.
     Returns (best_state, best_epoch).
     """
-    mu = torch.tensor(mu, dtype=torch.float32, device=device)
-    sigma = torch.tensor(sigma, dtype=torch.float32, device=device)
+    # mu/sigma cover all feature channels; FD is computed in position space,
+    # so keep only the first 6 (position) channels for denormalization.
+    mu = torch.tensor(mu, dtype=torch.float32, device=device)[:6]
+    sigma = torch.tensor(sigma, dtype=torch.float32, device=device)[:6]
     nll = nn.GaussianNLLLoss()
     mse = nn.MSELoss()
 

@@ -10,8 +10,8 @@ Every panel shares the FD-gain y-axis. The x-axis is a cost (lower = better) in
 the first three panels and noise tolerance (higher = better) in the fourth, so
 the "ideal" corner is top-left for costs and top-right for tolerance.
 
-Usage: python benchmark_pareto.py [results/benchmark/benchmark.csv]
-Output: results/benchmark/benchmark_pareto.png
+Usage: python benchmark_pareto.py [input.csv] [output.png]
+Output: results/benchmark/benchmark_pareto.png (or the given output path)
 """
 
 import csv
@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 CSV = sys.argv[1] if len(sys.argv) > 1 else "results/benchmark/benchmark.csv"
-OUT = "results/benchmark/benchmark_pareto.png"
+OUT = sys.argv[2] if len(sys.argv) > 2 else "results/benchmark/benchmark_pareto.png"
 
 # one stable color per architecture family (across every seq length)
 COLORS = {
@@ -33,6 +33,8 @@ COLORS = {
     "TSMixer": "#8c564b",
     "patchTST": "#e377c2",
     "dlinear": "#7f7f7f",
+    "nlinear": "#bcbd22",
+    "gru_distilled": "#17becf",
 }
 DOT_SIZE = 340  # marker area (pt^2) — big enough to hold the seq-length label
 LABEL_FS = 8  # font size of the seq-length text drawn inside each dot

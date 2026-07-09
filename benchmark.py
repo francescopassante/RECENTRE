@@ -105,8 +105,8 @@ def profile(ckpt_path):
 
 # ── accuracy eval (feature-aware, mirrors analyze_checkpoints.py + evaluate()) ──
 # The generalist checkpoints append velocity/acceleration channels, so the loader
-# must rebuild those features (with the stored per-task feat_std) rather than feed
-# raw 6-DOF frames. `noise` is passed through to evaluate(), which perturbs the
+# rebuilds those features from raw positions and z-scores them with the stored
+# per-channel mu/sigma. `noise` is passed through to evaluate(), which perturbs the
 # (normalized) model input by noise·N(0,1) — the same noise model as robustness.py.
 def eval_ckpt(ckpt, noise=None):
     config = ckpt["config"]
@@ -123,8 +123,7 @@ def eval_ckpt(ckpt, noise=None):
     test_tasks = parse_task(config["data"]["test_task"])
     for task in test_tasks:
         data_dict = np.load(f"datasets/{task}_dict.npy", allow_pickle=True).item()
-        data = (np.array([data_dict[pid] for pid in test_ids]) - mu) / sigma
-        vel_std, acc_std = ckpt.get("feat_std", {}).get(task, (None, None))
+        data = np.array([data_dict[pid] for pid in test_ids])
         ds = TimeSeriesDataset(
             data,
             test_ids,
@@ -132,8 +131,8 @@ def eval_ckpt(ckpt, noise=None):
             device=device,
             add_velocity=add_velocity,
             add_acceleration=add_acceleration,
-            vel_std=vel_std,
-            acc_std=acc_std,
+            mu=mu,
+            sigma=sigma,
         )
         loader = GPUBatchLoader(ds, batch_size=1024, shuffle=False)
         out = evaluate(model, loader, mu, sigma, device, noise=noise)

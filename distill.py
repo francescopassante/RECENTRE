@@ -12,19 +12,12 @@ from metrics import evaluate, fd, fd_gain
 from models import build_model, get_device
 
 """
-====================================================================
-Knowledge distillation: teacher (e.g. conformer) -> student (e.g. GRU)
-====================================================================
+the student is trained on three signals, each with its own weight:
 
-An experiment in compressing the best architecture's accuracy into the
-cheapest one. The teacher is a frozen trained checkpoint; the student is a
-fresh model trained on three signals, each with its own weight:
-
-  lambda_task : the usual hard-target loss (GaussianNLL - beta * fd_gain).
-                Keeps the *unbiased* ground-truth signal in the mix.
-  alpha_out   : output distillation. Closed-form KL between the teacher's and
+  lambda_task : the usual loss (GaussianNLL - beta * fd_gain).
+  alpha_out   : output distillation. KL between the teacher's and
                 student's per-dim Gaussians -> pulls student (mean, var) toward
-                the teacher's denoised mean and its calibrated variance.
+                the teacher's
   alpha_feat  : penultimate-feature distillation. Every architecture funnels
                 into fc_mean; we match the vector feeding it (projected from
                 the student's width to the teacher's) with an MSE.
@@ -32,7 +25,7 @@ fresh model trained on three signals, each with its own weight:
 The student reuses the teacher checkpoint's exact seeded split (train/val/test
 ids + mu/sigma), so it trains on the same frames the teacher trained on and is
 evaluated on the same held-out test patients -- directly comparable to the
-benchmark. Model selection / early stopping use val FD-gain, like engine.fit.
+benchmark. Model selection / early stopping use val FD-gain
 
 Usage: python distill.py configs/distill_gru.yaml
 """
@@ -62,21 +55,13 @@ teacher_ckpt = torch.load(teacher_path, map_location=device, weights_only=False)
 teacher_config = teacher_ckpt["config"]
 teacher_in = teacher_config["model"]["input_dim"]
 
-# The split (tasks, sequence_length, patients, mu/sigma) is fixed by the teacher
-# so the windows/targets align for distillation. But the student may use its own
-# input features (velocity/acceleration) and augmentation: those are just extra
-# input channels the teacher never sees. Channels are ordered [pos6, vel6, acc6],
-# so the teacher's pos-only input is the prefix x[..., :teacher_in]. Only the
-# feature/augmentation/batch knobs are overridable; tasks/seq_len/split are not.
+# data augmentation and batch size are overloadable, all the rest is fixed.
 data_config = dict(teacher_config["data"])
-for k in ("add_velocity", "add_acceleration", "neg_augmentation",
-          "time_augmentation", "batch_size"):
+for k in ("neg_augmentation", "time_augmentation", "batch_size"):
     if k in config.get("data", {}):
         data_config[k] = config["data"][k]
-assert teacher_in <= student_model_config["input_dim"], (
-    "teacher input channels must be a prefix of the student's "
-    "(distillation feeds the teacher x[..., :teacher_in])"
-)
+# student and teacher must share the same input_dim
+assert teacher_in == student_model_config["input_dim"]
 
 teacher = build_model(teacher_config["model"]).to(device)
 teacher.load_state_dict(teacher_ckpt["model_state"])
@@ -99,7 +84,6 @@ print(
     train_ids,
     val_ids,
     test_ids,
-    feat_std,
 ) = split_data(
     train_task=data_config["train_task"],
     test_task=data_config["test_task"],
@@ -124,43 +108,27 @@ print(
 )
 
 # projection maps the student penultimate into the teacher's penultimate space
-# (FitNets-style); only needed when feature distillation is on.
 proj = None
 if alpha_feat > 0:
     proj = nn.Linear(student.fc_mean.in_features, teacher.fc_mean.in_features).to(
         device
     )
 
-# ---- capture the penultimate feature (input to fc_mean) via forward hooks -----
-_feats = {}
+# PyTorch lets us attach a function to a layer that it runs automatically on every forward pass, passing
+# in that layer's inputs; we just log the input in this dict to read afterwards.
+penultimate = {}
 
 
-def _make_hook(key):
-    def hook(module, inp, out):
-        _feats[key] = inp[0]
-
-    return hook
+def teacher_hook(layer, layer_inputs, layer_output):
+    penultimate["teacher"] = layer_inputs[0]
 
 
-teacher.fc_mean.register_forward_hook(_make_hook("teacher"))
-student.fc_mean.register_forward_hook(_make_hook("student"))
+def student_hook(layer, layer_inputs, layer_output):
+    penultimate["student"] = layer_inputs[0]
 
 
-class InputSlice(nn.Module):
-    """Feed a model only its first `n` input channels. Lets a pos-only teacher
-    run on the student's pos+velocity+acceleration windows (channels are ordered
-    [pos, vel, acc]). Also used so evaluate() slices the teacher correctly."""
-
-    def __init__(self, model, n):
-        super().__init__()
-        self.model = model
-        self.n = n
-
-    def forward(self, x):
-        return self.model(x[..., : self.n])
-
-
-teacher_fwd = InputSlice(teacher, teacher_in)
+teacher.fc_mean.register_forward_hook(teacher_hook)
+student.fc_mean.register_forward_hook(student_hook)
 
 
 def gaussian_kl(mu_t, var_t, mu_s, var_s, eps=1e-6):
@@ -192,6 +160,13 @@ def feature_loss(feat_s, feat_t):
     return ((feat_s - feat_t) ** 2).mean()
 
 
+def mean_fdg(result):
+    """Mean per-frame FD-gain from an evaluate() result dict."""
+    return float(
+        np.mean((result["fd_base"] - result["fd_pred"]) / (result["fd_base"] + 1e-6))
+    )
+
+
 # ---- training ----------------------------------------------------------------
 params = list(student.parameters())
 if proj is not None:
@@ -203,8 +178,10 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode="min", factor=0.5, patience=10
 )
 
-mu_t = torch.tensor(mu, dtype=torch.float32, device=device)
-sigma_t = torch.tensor(sigma, dtype=torch.float32, device=device)
+# FD is position-space, so keep only the first 6 (position) channels for
+# denormalization -- matching engine.fit / metrics.evaluate.
+mu_t = torch.tensor(mu, dtype=torch.float32, device=device)[:6]
+sigma_t = torch.tensor(sigma, dtype=torch.float32, device=device)[:6]
 nll = nn.GaussianNLLLoss()
 
 best_val_fdg = float("-inf")
@@ -216,18 +193,18 @@ patience = train_config["patience"]
 pbar = tqdm.trange(train_config["epochs"])
 for epoch in pbar:
     student.train()
-    for _, x, y in tqdm.tqdm(
+    for patient_ids, x, y in tqdm.tqdm(
         train_loader, leave=False, desc=f"epoch {epoch + 1}"
     ):
         optimizer.zero_grad()
         x, y = x.to(device), y.to(device)
 
         with torch.no_grad():
-            mean_t, var_t = teacher_fwd(x)  # teacher sees only its pos channels
-            feat_t = _feats["teacher"]
+            mean_t, var_t = teacher(x)
+            feat_t = penultimate["teacher"]
 
         mean_s, var_s = student(x)
-        feat_s = _feats["student"]
+        feat_s = penultimate["student"]
 
         last_x = x[:, -1, :6]
         fd_base = fd(last_x, y, mu_t, sigma_t)
@@ -247,25 +224,9 @@ for epoch in pbar:
         optimizer.step()
 
     # ---- validation: select on FD-gain, step scheduler on task loss ----------
-    student.eval()
-    with torch.no_grad():
-        val_base_sum = torch.zeros((), device=device)
-        val_n = 0
-        val_fd_bases, val_fd_preds = [], []
-        for _, x, y in val_loader:
-            x, y = x.to(device), y.to(device)
-            mean_s, var_s = student(x)
-            bs = y.size(0)
-            val_base_sum += nll(mean_s, y, var_s) * bs
-            val_n += bs
-            last_x = x[:, -1, :6]
-            val_fd_bases.append(fd(last_x, y, mu_t, sigma_t))
-            val_fd_preds.append(fd(mean_s, y, mu_t, sigma_t))
-        val_base = (val_base_sum / val_n).item()
-        val_fdg = (
-            fd_gain(torch.cat(val_fd_bases), torch.cat(val_fd_preds)).mean().item()
-        )
-        val_loss = val_base - beta * val_fdg
+    val_result = evaluate(student, val_loader, mu, sigma, device)
+    val_fdg = mean_fdg(val_result)
+    val_loss = val_result["nll"] - beta * val_fdg
 
     scheduler.step(val_loss)
     pbar.set_postfix({"val_loss": f"{val_loss:.4f}", "val_fdg": f"{val_fdg:.4f}"})
@@ -285,14 +246,8 @@ student.load_state_dict(best_state)
 # ---- report: how much of the teacher->student headroom did we capture? -------
 pred_sigma = evaluate(student, val_loader, mu, sigma, device)["std"]
 
-
-def mean_fdg(model):
-    r = evaluate(model, test_loader, mu, sigma, device)
-    return float(np.mean((r["fd_base"] - r["fd_pred"]) / (r["fd_base"] + 1e-6)))
-
-
-teacher_fdg = mean_fdg(teacher_fwd)
-student_fdg = mean_fdg(student)
+teacher_fdg = mean_fdg(evaluate(teacher, test_loader, mu, sigma, device))
+student_fdg = mean_fdg(evaluate(student, test_loader, mu, sigma, device))
 print(
     f"\ntest FD-gain  |  teacher {teacher_fdg:.4f}  student {student_fdg:.4f}  "
     f"(best val FD-gain {best_val_fdg:.4f}, epoch {best_epoch})"
@@ -316,7 +271,6 @@ checkpoint = {
     "test_ids": test_ids,
     "best_epoch": best_epoch,
     "pred_sigma": pred_sigma,
-    "feat_std": feat_std,
     "proj_state": proj.state_dict() if proj is not None else None,
 }
 
