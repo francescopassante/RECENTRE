@@ -285,6 +285,29 @@ The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investiga
 As expected, uncertainty calibration degrades as $\beta$ grows near and past $\beta = 1$, while $FD_{gain}$ rises and then decreases again when $FD_{gain}$ is over-weighted in the loss. This is probably an overfitting phenomenon specific to the $FD_{gain}$ term: even though the loss function at very high $\beta$ is essentially a maximization of $FD_{gain}$, this doesn't generalize well to the validation/test set. 
 Across different scans, the three values $\beta = 0.1, 0.5, 1$ showed the best performances. We chose to use $\beta = 0.5$ as a middle ground between the optimally calibrated but lower $FD_{gain}$ focused $\beta = 0.1$ and the less calibrated but higher $FD_{gain}$ focused $\beta = 1$.
 
+\subsection{$\gamma$ scan (jerk penalty)}
+
+\begin{table}[ht]
+\centering
+\caption{Effect of the jerk-penalty weight $\gamma$ on test-set performance (GRU, sequence length 32).}
+\label{tab:gamma_scan}
+\small
+\begin{tabular}{l c c c}
+\toprule
+$\gamma$ & Mean FD & Mean $FD_{gain}$ & \% Frames $>$ base \\
+\midrule
+0     & 0.1268 & 0.1778 & 78.4 \\
+0.001 & 0.1267 & 0.1785 & 78.5 \\
+0.01  & 0.1267 & 0.1767 & 78.2 \\
+0.1   & 0.1280 & 0.1786 & 79.0 \\
+0.3   & 0.1273 & 0.1798 & 78.8 \\
+0.5   & 0.1285 & 0.1769 & 78.7 \\
+0.7   & 0.1312 & 0.1693 & 78.5 \\
+1     & 0.1363 & 0.1514 & 77.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Data augmentation}
 
 Next, we investigated whether data augmentation could be helpful for this project. Since the translation and rotation parameters are physically related, there is little room for independent transformation of the motion parameters. We investigated two physically plausible transformations: time reversal and negation (sign flip). 
@@ -368,7 +391,7 @@ to the loss function, where the jerk $J(t)$ is computed via finite diffirences a
     J(t) = a(t) - a(t-2) = x(t) - 3x(t-2) + 3x(t-4) - x(t-6)
 \end{equation}
 
-Where the 2-strided input is kept to avoid using in-between frames that the model never sees. We then swept $\gamma$ over many orders of magnitude to study its effect on test performances for the GRU model. The results are shown in Table \ref{tab:gamma_sweep}
+Where the 2-strided input is kept to avoid using in-between frames that the model never sees. We then swept $\gamma$ over many orders of magnitude to study its effect on test performances for the GRU model. The results are shown in Table \ref{tab:gamma_scan}
 
 
 \section{Discussion}
