@@ -285,7 +285,6 @@ The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investiga
 As expected, uncertainty calibration degrades as $\beta$ grows near and past $\beta = 1$, while $FD_{gain}$ rises and then decreases again when $FD_{gain}$ is over-weighted in the loss. This is probably an overfitting phenomenon specific to the $FD_{gain}$ term: even though the loss function at very high $\beta$ is essentially a maximization of $FD_{gain}$, this doesn't generalize well to the validation/test set. 
 Across different scans, the three values $\beta = 0.1, 0.5, 1$ showed the best performances. We chose to use $\beta = 0.5$ as a middle ground between the optimally calibrated but lower $FD_{gain}$ focused $\beta = 0.1$ and the less calibrated but higher $FD_{gain}$ focused $\beta = 1$.
 
-\subsection{$\gamma$ scan (jerk penalty)}
 
 \begin{table}[ht]
 \centering
@@ -332,6 +331,28 @@ Both & 0.145 & 0.085 & 71.9  \\
 From the empirical data in Table \ref{tab:augmentation} we find that, while time reversal augmentation degrades the performances on the (non augmented) test set, negation significantly improves them. From now on, we always train the models with negation-augmented data.
 
 
+\subsection{$\gamma$ scan (jerk penalty)}
+
+
+Since the task of interest is a physical motion prediction task, we investigated whether enforcing a kinematic prior could help the model find a better solution. Indeed, injecting symmetry priors or inductive biases into ML models is widely known to improve performance and/or efficiency in many applications (that's what geometrical deep learning is all about), e.g. enforcing SE(3) equivariance in mesh classification or gauge equivariance in lattice gauge theory models.
+For tasks that do not have an exact symmetry to enforce, an alternative approach is to inject the physical bias in the loss function. In our case, we studied whether a jerk penalty term in the loss could help the model explore more physically plausible solutions and thus lead to better optimization and generalization. We chose to use a jerk penalty because our data is rapidly fluctuating, so using velocity- or acceleration-related penalties probably wouldn't help. Jerk penalty is a bit more theoretically grounded, as it captures the muscles' ability to produce smooth changes in applied force, while still penalizing very rapid changes in movement.
+
+We added the term
+\begin{equation}
+    L_{jerk} = \gamma J(t)
+\end{equation}
+
+to the loss function, where the jerk $J(t)$ is computed via finite diffirences as:
+
+\begin{equation}
+    J(t) = a(t) - a(t-2) = x(t) - 3x(t-2) + 3x(t-4) - x(t-6)
+\end{equation}
+
+Where the 2-strided input is kept to avoid using in-between frames that the model never sees. We then swept $\gamma$ over many orders of magnitude to study its effect on test performances for the GRU model. The results are shown in Table \ref{tab:gamma_scan}.
+
+We see from the results that we gain at most 0.002 ($\sim 1\%$) from the base model. This very small gain is not sufficient to conclude that the jerk penalty improves prediction accuracy. A possible future extension of this project could be to train many models and to associate a statistical error to the test performance so that an actual statistical edge could be confirmed or ruled out.
+
+
 
 \subsection{TCN}
 
@@ -348,10 +369,10 @@ The TCN model showed remarkable performances, competitive with the original GRU 
 
 \subsection{Routing over experts}
 Inspired by MoE systems in modern LLMs, we decided to try combining different "experts", i.e. model architectures, to give a better overall frame-by-frame prediction. 
-Given the long training runs of the best (heavy) experts, we first chose to keep the already trained models and just train a global router. Clearly this doesn't let each architecture become an expert in a particular regime or type of input sequence, but it is still an interesting ensemble-like strategy.
+Given the long training runs of the best (heavy) experts, we chose to keep the already trained models and just train a global router. Clearly this doesn't let each architecture become an expert in a particular regime, but it is still an interesting ensemble-like strategy.
 We chose four experts: the best mamba, conformer and GRU models (at sequence length 128), along with the baseline, and trained a router to predict coefficients to linearly combine the prediction of the four models. 
 
-The router is a small MLP that takes as input the per-frame experts' predictions and uncertainties and outputs softmax weights over the four models for the current frame. The router is trained to maximize $FD_{gain}$ with the three experts kept frozen. The router is trained on the validation patients and evaluated on the held-out test patients, both unseen by every expert (more precisely, $85\%$ of the validation patients are used for training, $15\%$ are for the actual validation (early stopping) and the test patients are for testing). Results are reported in Table~(\ref{tab:router}).
+The router is a small MLP that takes as input the per-frame experts' predictions and uncertainties and outputs softmax weights over the four models for the current frame. The router is trained to maximize $FD_{gain}$ with the three experts kept frozen. The router is trained on the validation patients and evaluated on the held-out test patients, both unseen by every expert (more precisely, $85\%$ of the validation patients are used for training, $15\%$ are for the actual validation (early stopping) and the test patients are for testing). Results are reported in Table~(\ref{tab:routing-fd-gain}).
 
 \begin{table}[h]
 \centering
@@ -374,25 +395,17 @@ Fixed router-mean weights & 0.2221 \\
 
 We see that the soft routing strategy found by the model does indeed improve performances. We also collected the average weights produced by the router for each model: mamba $16\%$ for the Mamba model, $61\%$ for the Conformer, $15\%$ for the GRU and $8\%$ for the baseline. We immediately see that all models are blended in, and better-performing models are given a larger weight on average. To evaluate the actual role of the per-frame router vs. a fixed linear combination of the models, we evaluated a fixed mean of the 3 best models ($33\%$ weight to each model) and a fixed mean of the best models where the weights are given by the previously mentioned averages. We see that active frame-by-frame routing is indeed the best option, although the best fixed linear combination achieves roughly the same performances.
 
+\subsection{Model comparisons}
+We trained 9 different architectures with 4 sequence lengths each. We compare all of them among very different metrics, from test accuracy to model size to noise robustness. In particular, we rank the models based on $FD_{gain}$, but we report, for all of them:  number of parameters, size, FLOPs latency, throughput, FD,  $FD_{gain}$,  $\%FD_{gain}>0$ NLL, $ \Delta FD@0.3\sigma$, tolerance to noise. We report the full results in Table \ref{tab:benchmark}.
 
-\subsection{Kinematical constraints}
+To have a more visual look at the data, we create a set of Pareto-optimal frontier visualizations. We plot accuracy ($FD_{gain}$) on the y-axis and cost (latency, FLOPs, size) on the x-axis. We also do a scatterplot of $FD_{gain}$ vs. noise tolerance, although the clear linear term simply shows that all models lose accuracy in the same way when noise is added, there is no clear 'noise-robust' winner, just a better model overall which needs more noise to be brought down in accuracy. The plots are shown in Fig. (\ref{fig:pareto-plots})
 
-Since the task of interest is a physical motion prediction task, we investigated whether enforcing a kinematic prior could help the model find a better solution. Indeed, injecting symmetry priors or inductive biases into ML models is widely known to improve performance and/or efficiency in many applications (that's what geometrical deep learning is all about), e.g. enforcing SE(3) equivariance in mesh classification or gauge equivariance in lattice gauge theory models.
-For tasks that do not have an exact symmetry to enforce, an alternative approach is to inject the physical bias in the loss function. In our case, we studied whether a jerk penalty term in the loss could help the model explore more physically plausible solutions and thus lead to better optimization and generalization. We chose to use a jerk penalty because our data is rapidly fluctuating, so using velocity- or acceleration-related penalties probably wouldn't help. Jerk penalty is a bit more theoretically grounded, as it captures the muscles' ability to produce smooth changes in applied force, while still penalizing very rapid changes in movement.
 
-We added the term
-\begin{equation}
-    L_{jerk} = \gamma J(t)
-\end{equation}
+\subsection{Distillation}
 
-to the loss function, where the jerk $J(t)$ is computed via finite diffirences as:
+From the pareto-optimal frontier it is clear that the best performing model is the conformer, followed by the mamba and then by the GRU. Given the large difference in latency between the GRU and the conformer, it'd be ideal to push the GRU to have higher accuracy while still keeping their remarkably low latency. To achieve such goal, we tried knowledge distillation from the conformer onto the GRU. 
 
-\begin{equation}
-    J(t) = a(t) - a(t-2) = x(t) - 3x(t-2) + 3x(t-4) - x(t-6)
-\end{equation}
-
-Where the 2-strided input is kept to avoid using in-between frames that the model never sees. We then swept $\gamma$ over many orders of magnitude to study its effect on test performances for the GRU model. The results are shown in Table \ref{tab:gamma_scan}
-
+In particular, distillation happens on two separate spaces: the output space (mean, var) and the latent space, just before the fully connected heads. Both models indeed send the output of their architecture-specific latent space onto a fc mean head and a fc var head. We therefore use the latent space before the fc heads to distill the conformer onto the GRU. Since these latent spaces have different dimensions, we first linearly project the student latent space to the teacher's, and then simply use MSE loss to bring the latent feature closer to each other. For the output space, we use the KL divergence between the normal distributions (mean, var) outputted by the two models. The results are shown in Table \ref{table:distillation} and Fig. \ref{fig:pareto-plots-distillation}. As we can see, we succedeed in achieving significantly higher $FD_{gain}$ while retaining the very low latency of the GRU model. In future work, this distillation process could be optimized over the various hyperparameters weighing the latent space or output space contributions and the temperature of the teachers' soft labels. 
 
 \section{Discussion}
 

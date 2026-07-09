@@ -12,19 +12,12 @@ from metrics import evaluate, fd, fd_gain
 from models import build_model, get_device
 
 """
-====================================================================
-Knowledge distillation: teacher (e.g. conformer) -> student (e.g. GRU)
-====================================================================
+the student is trained on three signals, each with its own weight:
 
-An experiment in compressing the best architecture's accuracy into the
-cheapest one. The teacher is a frozen trained checkpoint; the student is a
-fresh model trained on three signals, each with its own weight:
-
-  lambda_task : the usual hard-target loss (GaussianNLL - beta * fd_gain).
-                Keeps the *unbiased* ground-truth signal in the mix.
-  alpha_out   : output distillation. Closed-form KL between the teacher's and
+  lambda_task : the usual loss (GaussianNLL - beta * fd_gain).
+  alpha_out   : output distillation. KL between the teacher's and
                 student's per-dim Gaussians -> pulls student (mean, var) toward
-                the teacher's denoised mean and its calibrated variance.
+                the teacher's
   alpha_feat  : penultimate-feature distillation. Every architecture funnels
                 into fc_mean; we match the vector feeding it (projected from
                 the student's width to the teacher's) with an MSE.
@@ -32,7 +25,7 @@ fresh model trained on three signals, each with its own weight:
 The student reuses the teacher checkpoint's exact seeded split (train/val/test
 ids + mu/sigma), so it trains on the same frames the teacher trained on and is
 evaluated on the same held-out test patients -- directly comparable to the
-benchmark. Model selection / early stopping use val FD-gain, like engine.fit.
+benchmark. Model selection / early stopping use val FD-gain
 
 Usage: python distill.py configs/distill_gru.yaml
 """
@@ -62,19 +55,13 @@ teacher_ckpt = torch.load(teacher_path, map_location=device, weights_only=False)
 teacher_config = teacher_ckpt["config"]
 teacher_in = teacher_config["model"]["input_dim"]
 
-# The split (tasks, sequence_length, patients, mu/sigma) is fixed by the teacher
-# so the windows/targets align for distillation. The student shares the teacher's
-# input features (add_velocity/add_acceleration), so both see identical channels
-# and the teacher runs directly on the student's windows. Only the augmentation
-# and batch knobs are overridable; tasks/seq_len/features/split are not.
+# data augmentation and batch size are overloadable, all the rest is fixed.
 data_config = dict(teacher_config["data"])
 for k in ("neg_augmentation", "time_augmentation", "batch_size"):
     if k in config.get("data", {}):
         data_config[k] = config["data"][k]
-assert teacher_in == student_model_config["input_dim"], (
-    "student input_dim must match the teacher's (they share add_velocity/"
-    "add_acceleration, so the teacher runs on the student's windows directly)"
-)
+# student and teacher must share the same input_dim
+assert teacher_in == student_model_config["input_dim"]
 
 teacher = build_model(teacher_config["model"]).to(device)
 teacher.load_state_dict(teacher_ckpt["model_state"])
