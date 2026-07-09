@@ -4,7 +4,7 @@ output_dir: checkpoints/generalist
 
 model:
   type: nlinear
-  sequence_length: 10
+  sequence_length: 128
   input_dim: 6
   output_dim: 6
 
@@ -14,7 +14,7 @@ data:
   batch_size: 16384
   split_percentages: [0.7, 0.15, 0.15]
   cross_patients: false
-  sequence_length: 10
+  sequence_length: 128
   time_augmentation: false
   neg_augmentation: true
 
@@ -24,4 +24,4 @@ train:
   epochs: 150
   patience: 100
   lr: 1.0e-3
-  weight_decay: 1.0e-4
+  weight_decay: 1.0e-3   # bumped from 1e-4: 128-wide linear overfits more than L=10
