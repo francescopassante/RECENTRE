@@ -28,9 +28,9 @@ def fit(
     sigma,
     loss="gaussian_nll",
     beta=0.1,
-    gamma=0.0,
+    gamma=0.0, #coefficient of jerk
     patience=10,
-    reference=None,
+    reference=None, #weights of trained model (for fine-tuning)
     lambda_l2sp=0.0,
     verbose=True,
 ):

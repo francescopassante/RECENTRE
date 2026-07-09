@@ -82,7 +82,7 @@ class TimeSeriesDataset(Dataset):
         x = self.data[p, t : t + self.time_span : 2, :]  # Sub-sequence
         y = self.data[
             p, t + (self.time_span) - 1, :6
-        ]  # Next time step (6 positions only)
+        ]  # Next time step (6 positions only), target
         return self.ids[p], x, y
 
 
@@ -104,7 +104,7 @@ class GPUBatchLoader:
         )
 
     def __len__(self):
-        return (self.n_samples + self.batch_size - 1) // self.batch_size
+        return (self.n_samples + self.batch_size - 1) // self.batch_size #number of batches
 
     def __iter__(self):
         ds = self.dataset
@@ -112,13 +112,13 @@ class GPUBatchLoader:
         if self.shuffle:
             order = torch.randperm(self.n_samples, device=device)
         else:
-            order = torch.arange(self.n_samples, device=device)
+            order = torch.arange(self.n_samples, device=device) #array of len = numb of windows
         wpp = self.windows_per_patient
         for start in range(0, self.n_samples, self.batch_size):
-            idx = order[start : start + self.batch_size]
-            p = idx // wpp
-            t = idx % wpp
-            x = ds.data[p[:, None], t[:, None] + self.x_offsets[None, :], :]
+            idx = order[start : start + self.batch_size] #take the "index" of the windows in each batch
+            p = idx // wpp #array of corresponding patients
+            t = idx % wpp #array of corresponding times
+            x = ds.data[p[:, None], t[:, None] + self.x_offsets[None, :], :] #with None they become column vectors, x_offsets gives the 2 leap (0,2,4...)
             y = ds.data[p, t + ds.time_span - 1, :6]  # target = 6 positions only
             ids_b = [ds.ids[i] for i in p.tolist()]
             yield ids_b, x, y
@@ -290,7 +290,7 @@ def split_data(
             add_velocity=add_velocity,
             add_acceleration=add_acceleration,
         )
-        for task in splits["train"]
+        for task in splits["train"] 
     ]
 
     # Use velocity and acceleration sigmas of training set to normalize.

@@ -491,7 +491,7 @@ class DLinear(nn.Module):
         B, L, C = x.shape
         assert L == self.L and C == self.C
 
-        x_t = x.permute(0, 2, 1)
+        x_t = x.permute(0, 2, 1) # [B, D, T]
         
         front = x_t[:, :, 0:1].repeat(1, 1, self.pad) #copy the first element
         end = x_t[:, :, -1:].repeat(1, 1, self.pad) #copy the last element
@@ -528,7 +528,7 @@ class NLinear(nn.Module):
     def __init__(self, sequence_length, input_dim, output_dim):
         super().__init__()
         self.L = sequence_length
-        self.C = input_dim
+        self.C = output_dim
         self.linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
         self.logvar_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
 
@@ -536,7 +536,7 @@ class NLinear(nn.Module):
         B, L, C = x.shape
         assert L == self.L and C == self.C
 
-        x_t = x.permute(0, 2, 1)       # [B, C, L]
+        x_t = x.permute(0, 2, 1)  # [B, D, T]
         x_norm = x_t - x_t[:, :, -1:]  # subtract last frame per channel
 
         pred_mean = torch.zeros([B, self.C], device=x.device)
@@ -607,7 +607,8 @@ class ConformerConvModule(nn.Module):
         h = F.glu(self.pointwise1(h), dim=1)    # [B, d_model, T]
         h = self.act(self.gnorm(self.depthwise(h)))
         h = self.dp(self.pointwise2(h))
-        return h.transpose(1, 2)                # [B, T, d_model]
+        return h.transpose(1, 2)               
+
 
 
 class ConformerAttention(nn.Module):
@@ -801,7 +802,7 @@ class MambaBlock(nn.Module):
 
     def forward(self, x):
         # x: [B, L, d_model]
-        L = x.size(1)
+        L = x.size(1) #second dimension
         x_in, z = self.in_proj(x).chunk(2, dim=-1)  # each [B, L, d_inner]
 
         # depthwise causal conv: drop the right padding so step t sees only <= t
