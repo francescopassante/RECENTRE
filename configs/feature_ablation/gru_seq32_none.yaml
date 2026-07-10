@@ -1,0 +1,29 @@
+data:
+  add_acceleration: false
+  add_velocity: false
+  batch_size: 8192
+  cross_patients: false
+  neg_augmentation: true
+  sequence_length: 32
+  split_percentages:
+  - 0.7
+  - 0.15
+  - 0.15
+  test_task: R+M+L
+  time_augmentation: false
+  train_task: R+M+L
+model:
+  dropout: 0.5
+  hidden_dim: 128
+  input_dim: 6
+  num_layers: 2
+  output_dim: 6
+  type: gru
+output_dir: checkpoints/feature_ablation
+train:
+  beta: 0.5
+  epochs: 100
+  loss: gaussian_nll
+  lr: 0.001
+  patience: 30
+  weight_decay: 0.0001

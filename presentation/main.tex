@@ -425,6 +425,19 @@ To have a more visual look at the data, we create a set of Pareto-optimal fronti
 
 As we can see, the conformer model achieves the best test accuracy out of all the models. Second is the mamba, then the GRU, then all the others. We can clearly see that sequence length is the single most relevant factor for accuracy, and that channel-independent models (Nlinear, Dlinear, PatchTST) score poorly on our task. This is expected, since the different motion parameters are physically correlated, and channel-mixing clearly helps exploiting this correlation.
 
+To analyze the dependence of model performance on the input sequence length (this is a major factor in actual real time deployment) we perform a scan of the best three models (Conformer, Mamba, GRU) over the sequence lengths $T = \{10, 32, 64, 128\}$ and plot the results in Fig. (\ref{fig:seqlen-scan})
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/fdg_vs_seqlen.png}
+\caption{$FD_{gain}$ as a function of sequence length for the best three models.}
+\label{fig:seqlen-scan}
+\end{figure}
+
+We can see that the accuracy metrics grow with sequence length. Past $T = 64$ we enter in diminishing-returns territory, and the mean FD actually slightly deteriorates when going from $T=64$ to $T = 128$.
+
+
+
 
 
 \subsection{Routing over experts}
