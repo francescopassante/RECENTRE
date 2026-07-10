@@ -357,22 +357,20 @@ We see from the results that we gain at most 0.002 ($\sim 1\%$) from the base mo
 
 The first new model we implemented is a temporal convolutional network (TCN). This network uses temporal convolution kernels at various level of dilations to create causal masks (i.e. the kernel is 0 for frames that are in the future with respect to the output frame). The last frame is then taken and linearly projected by two separate heads to produce (mean, var). Like all the architectures we implemented, the model predicts a residual with respect to the last position. A schematic diagram of the network forward is found in Fig.~(\ref{fig:tcn_diagram}).
 
-\begin{figure}
-    \includegraphics[width=0.8 \linewidth]{figures/tcn_diagram.png}
-    \caption{Schematic diagram of the TCN model}
-    \label{fig:tcn_diagram}
-\end{figure}
+The lightest model we implemented is the NLinear model~\cite{zeng2022transformers} with $\mathcal{O}(L)$ parameters, $L$ being the sequence length. The architecture philosophy is to center the whole window with respect to the last frame and apply six independent linear layers (one for each channel) to predict the shift of the next frame, and another six to predict the associated variance.
 
 
+\subsection{DLinear}
+
+The DLinear model~\cite{zeng2022transformers} is among the lightest models as well. It separates the global movement (\textit{trend}) with respect to the high frequency one (\textit{season}) by shifting a kernel along the window and taking the mean each kernel-size frames. Then six linear layers each are applied separately to the trend, season and the initial data (for a total of $18$ layers). The first two outputs are summed to predict the shift of the next frame while the latter to predict the variances.
 
 
-
-\subsection{Transformer}
+\subsection{TSMixer}
 
 The next model we implemented is a basic encoder-only transformer with multi-head self attention across the time frames. Just like in the TCN, the last frame of the output of the transformer is fed to two linear layers that predict the shift of the next frame and the corresponding variance. We use fixed, sinusoidal positional embeddings. For all attention-based architectures, which have permutation invariance naturally baked-in, time series forecasting is a hard task. Positional embeddings are necessary but often not sufficient to give a clear and unambiguous time ordering to the time series fed to the transformer. Many transformer-based architectures aim to solve this problem with various ideas. One of them is the PatchTST architecture.
 
 
-\subsection{PatchTST}
+\subsection{TCN}
 
 PatchTST~\cite{nie2023timeseriesworth64} is the state-of-the-art transformer model for time series forecasting in many different benchmarks. There are two main differences from a basic transformer model:
 \begin{itemize}
@@ -383,18 +381,25 @@ PatchTST~\cite{nie2023timeseriesworth64} is the state-of-the-art transformer mod
 The patches are summed with learnable positional embeddings and then treated as standard tokens in a multi-head self-attention mechanism. All the final patches are used for prediction, unlike the classical transformer where only the last frame is used.
 
 
+\begin{figure}
+    \includegraphics[width=0.8 \linewidth]{figures/tcn_diagram.png}
+    \caption{Schematic diagram of the TCN model for a kernel size equal to three, and dilation that doubles at each new layer. The dilation allows far away frames to interact.}
+    \label{fig:tcn_diagram}
+\end{figure}
 
-\subsection{NLinear}
+The TCN model showed remarkable performances, competitive with the original GRU architecture.
 
 A 2022 paper by Zeng et al~\cite{zeng2022transformers} showed that "embarassingly simple" linear models could beat transformer-based models by a big margin in many time series forecasting tasks. We implemented the NLinear model proposed in that paper. It is a very light model, with $\mathcal{O}$(T) parameters. The architecture philosophy is to center the whole window with respect to the last frame and apply a simple channel-independent linear map between the whole sequence and the predicted frame. In our case, there are $6$ linear layers for the mean head and 6 linear layers for the variance head.
 
+\subsection{Transformer}
 
-\subsection{DLinear}
+The next model implemented is a basic transformer with two encoder-only layers made of a multi-head self attention across the time frames. The last frame of the output of the transformer is fed to two linear layers that predict the shift of the next frame and the corresponding variance.
 
 The other model proposed in the Zeng paper is the DLinear model. It is among the lightest models as well. The idea is to decompose the global movement (trend) with respect to the high frequency one (season) by shifting a convolutional kernel along the window to extract a moving average. The original length-T sequence is therefore decomposed as a length-T trend component and a length-T season component. Then 3 linear ($T \to 1$) layers are applied separately to the trend, season and the original data, the first two outputs are summed to predict the next frame mean, while the latter to predict the variance. It is still a channel-independent model.
 
+\subsection{PatchTST}
 
-\subsection{TSMixer}
+A transformer-based model for time forecasting is the patch time series Transformer~\cite{nie2023timeseriesworth64} (PatchTST). It enforces a channel-independent analysis: for each channel the window is segmented into multiple patches that are fed as input tokens to the transformer. Also, all channels share the same embedding and transformer weights.
 
 Our analysis (see later) showed that channel-independent models such as PatchTST, Nlinear and Dlinear don't have good performances on our task. A slighty more complicated architecture, inspired by the Zeng paper, was proposed by the Google Cloud AI team in 2023: TSMixer.
 The Time-Series Mixer~\cite{chen2023tsmixerallmlparchitecturetime} is composed mainly of MLP layers but with the advantage of alternating time-mixing layers with channel-mixing layers. A schematic picture of the TSMixer architecture is shown in Fig. (\ref{fig:TSMixer}). A number of TSMixer layers are applied in sequence, each of them composed of a multi-layer perceptron among the frames and another among the features. This model should allow for richer channel-mixing operations that our task seems to require. 
@@ -437,7 +442,9 @@ To analyze the dependence of model performance on the input sequence length (thi
 We can see that the accuracy metrics grow with sequence length. Past $T = 64$ we enter in diminishing-returns territory, and the mean FD actually slightly deteriorates when going from $T=64$ to $T = 128$.
 
 
+\subsection{Mamba}
 
+mamba
 
 
 \subsection{Routing over experts}
