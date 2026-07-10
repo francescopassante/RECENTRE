@@ -18,7 +18,7 @@ nofootinbib
 
 \title{Advanced Machine Learning for Physics student project: RECENTRE}
 
-\author{Francesco Il Passero}
+\author{Francesco Passante}
 
 \author{Eugenio Nicotina}
 
@@ -353,6 +353,30 @@ Where the 2-strided input is kept to avoid using in-between frames that the mode
 We see from the results that we gain at most 0.002 ($\sim 1\%$) from the base model. This very small gain is not sufficient to conclude that the jerk penalty improves prediction accuracy. A possible future extension of this project could be to train many models and to associate a statistical error to the test performance so that an actual statistical edge could be confirmed or ruled out.
 
 
+\subsection{TCN}
+
+The first new model we implemented is a temporal convolutional network (TCN). This network uses temporal convolution kernels at various level of dilations to create causal masks (i.e. the kernel is 0 for frames that are in the future with respect to the output frame). A schematic diagram of the network is found in Fig.~(\ref{fig:tcn_diagram}).
+
+\begin{figure}
+    \includegraphics[width=0.8 \linewidth]{figures/tcn_diagram.png}
+    \caption{Schematic diagram of the TCN model}
+    \label{fig:tcn_diagram}
+\end{figure}
+
+The TCN model showed remarkable performances, competitive with the original GRU architecture.
+
+
+
+
+\subsection{Transformer}
+
+The next model implemented is a basic transformer with an encoder only layer made of a multi-head self attention across the time frames. The last frame of the output of the transformer is fed to two linear layers that predict the shift of the next frame and the corresponding variance.
+
+
+\subsection{PatchTST}
+
+A transformed based model for time forecasting is the patch time series Transformer~\cite{nie2023timeseriesworth64} (PatchTST). It enforces a channel-independent analysis: for each channel the window is segmented into multiple patches that are fed as input tokens to the transformer. Also, all channels share the same embedding and transformer weights across the all the time series.
+
 
 \subsection{NLinear}
 
@@ -368,37 +392,11 @@ The DLinear model~\cite{zeng2022transformers} is among the lightest models as we
 
 The Time-Series Mixer~\cite{chen2023tsmixerallmlparchitecturetime} (TSMixer) is composed mainly of linear layers as well with the advantage of mixing operations along both the time and feature dimensions. Four TSMixer layers are applied in sequence, each of them composed of a  multi-layer perceptron among the frames and another among the features; plus the activation functions, dropout and residual connections. 
 
-
-\subsection{Transformer}
-
-The next model implemented is a basic transformer with an encoder only layer made of a multi-head self attention across the time frames. The last frame of the output of the transformer is fed to two linear layers that predict the shift of the next frame and the corresponding variance.
-
-
-\subsection{PatchTST}
-
-A transformed based model for time forecasting is the patch time series Transformer~\cite{nie2023timeseriesworth64} (PatchTST). It enforces a channel-independent analysis: for each channel the window is segmented into multiple patches that are fed as input tokens to the transformer. Also, all channels share the same embedding and transformer weights across the all the time series.
-
-
-
 \subsection{Conformer}
 
 A conformer model~\cite{gulati2020conformerconvolutionaugmentedtransformerspeech} is an architecture that combine transformers and convolutional neural networks (CNN). The former is specialized to analyze long range patterns, while the latter is specialized to analyze short range ones, making the hybrid architecture extremely powerful and indeed the most successful one in our study. From the transformer it inherits the positional embedding, the feed forward and the multi head self-attention. From the CNN it inherits a 1D-convolutional layer with $kernel\_size=1$ that doubles the channels number using the same weights across all frames, and performs a Gated Linear Unit (GLU). Another 1D-convolutional layer is applied, this time channel independent with $kernel\_size>1$ to capture high frequency patterns, and after activation function and dropout another 1D-convolutional layer with $kernel\_size=1$ is applied to mix all features before feeding the transformed data to the two linear layers that predict the shift of the next frame and the corresponding variance.
 
 
-
-
-
-\subsection{TCN}
-
-The first new model we implemented is a temporal convolutional network (TCN). This network uses temporal convolution kernels at various level of dilations to create causal masks (i.e. the kernel is 0 for frames that are in the future with respect to the output frame). A schematic diagram of the network is found in Fig.~(\ref{fig:tcn_diagram}).
-
-\begin{figure}
-    \includegraphics[width=0.8 \linewidth]{figures/tcn_diagram.png}
-    \caption{Schematic diagram of the TCN model}
-    \label{fig:tcn_diagram}
-\end{figure}
-
-The TCN model showed remarkable performances, competitive with the original GRU architecture.
 
 
 \subsection{Routing over experts}
