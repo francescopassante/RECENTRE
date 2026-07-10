@@ -19,18 +19,21 @@ from models import build_model, get_device
 
 CHECKPOINT_DIR = "checkpoints/generalist"
 CHECKPOINTS = [
-    "conformer_R+M+LvR+M+L_beta0.5_ep100.pth",
-    "conformer_R+M+LvR+M+L_beta0.5_ep150_2.pth",
-    "conformer_R+M+LvR+M+L_beta0.5_ep100_2.pth",
-    "conformer_R+M+LvR+M+L_beta0.5_ep150.pth",
-    "mamba_R+M+LvR+M+L_beta0.5_ep100_5.pth",
-    "mamba_R+M+LvR+M+L_beta0.5_ep100_2.pth",
-    "mamba_R+M+LvR+M+L_beta0.5_ep100_3.pth",
-    "mamba_R+M+LvR+M+L_beta0.5_ep100_4.pth",
-    "gru_R+M+LvR+M+L_beta0.5_ep100_7.pth",
-    "gru_R+M+LvR+M+L_beta0.5_ep100_6.pth",
-    "gru_R+M+LvR+M+L_beta0.5_ep100.pth",
-    "gru_R+M+LvR+M+L_beta0.5_ep150_2.pth",
+    # best conformer/mamba/gru per sequence length (10/32/64/128), matching the
+    # winners in results/benchmark/benchmark.csv (ep200 generation, current
+    # length-18 mu/sigma format).
+    "conformer_R+M+LvR+M+L_beta0.5_ep200.pth",
+    "conformer_R+M+LvR+M+L_beta0.5_ep200_4.pth",
+    "conformer_R+M+LvR+M+L_beta0.5_ep200_2.pth",
+    "conformer_R+M+LvR+M+L_beta0.5_ep200_3.pth",
+    "mamba_R+M+LvR+M+L_beta0.5_ep200_4.pth",
+    "mamba_R+M+LvR+M+L_beta0.5_ep200_3.pth",
+    "mamba_R+M+LvR+M+L_beta0.5_ep200_2.pth",
+    "mamba_R+M+LvR+M+L_beta0.5_ep200.pth",
+    "gru_R+M+LvR+M+L_beta0.5_ep200_4.pth",
+    "gru_R+M+LvR+M+L_beta0.5_ep200.pth",
+    "gru_R+M+LvR+M+L_beta0.5_ep200_2.pth",
+    "gru_R+M+LvR+M+L_beta0.5_ep200_3.pth",
 ]
 RESULTS_DIR = "results/seqlen_scan"
 os.makedirs(RESULTS_DIR, exist_ok=True)
