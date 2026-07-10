@@ -33,11 +33,10 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.utils.flop_counter import FlopCounterMode
 
 from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
 from metrics import evaluate
-from models import build_model, get_device
+from models import build_model, count_flops, get_device
 
 CKPT_DIR = sys.argv[1] if len(sys.argv) > 1 else "checkpoints/generalist"
 RESULTS_DIR = "results/benchmark"
@@ -87,10 +86,7 @@ def profile(ckpt_path):
     n_params = sum(p.numel() for p in model.parameters())
     size_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / 1e6
 
-    one = torch.randn(1, seq_len, in_dim, device=device)
-    with torch.no_grad(), FlopCounterMode(display=False) as fc:
-        model(one)
-    flops = fc.get_total_flops()
+    flops = count_flops(model, seq_len, in_dim)
 
     latency_single = time_batch(model, 1, seq_len, in_dim)
     latency_batch = time_batch(model, BATCH_SIZE, seq_len, in_dim)
@@ -174,16 +170,32 @@ def tolerance_sigma(levels, fd_preds, fd_base_clean):
     return None
 
 
+def arch_label(config):
+    """Architecture name used for grouping/rows.
+
+    A distilled student embeds a `distill`/`teacher` section in its config but
+    keeps its base `model.type` (e.g. a distilled GRU is still type 'gru'). We
+    suffix it with '_distilled' so it forms its own family instead of colliding
+    with the from-scratch model of the same type — matching the 'gru_distilled'
+    label benchmark_pareto.py expects.
+    """
+    mtype = config["model"]["type"]
+    if config.get("distill") or config.get("teacher"):
+        return f"{mtype}_distilled"
+    return mtype
+
+
 # ── pass 1: evaluate every checkpoint clean, keep the best per family ──
-# family = (model type, sequence length); the same architecture at two window
-# lengths therefore yields two separate rows.
+# family = (architecture label, sequence length); the same architecture at two
+# window lengths therefore yields two separate rows, and a distilled student is
+# its own family separate from the from-scratch model of the same base type.
 ckpt_files = sorted(f for f in os.listdir(CKPT_DIR) if f.endswith(".pth"))
 best = {}  # (type, seq_len) -> (fdg, fname, clean run_eval result)
 for fname in ckpt_files:
     path = os.path.join(CKPT_DIR, fname)
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     data_cfg = ckpt["config"]["data"]
-    key = (ckpt["config"]["model"]["type"], data_cfg.get("sequence_length", 10))
+    key = (arch_label(ckpt["config"]), data_cfg.get("sequence_length", 10))
     res = eval_ckpt(ckpt)
     print(f"  {fname:<52} FDg={res['fdg']:.4f}")
     if key not in best or res["fdg"] > best[key][0]:

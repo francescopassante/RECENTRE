@@ -5,12 +5,11 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.utils.flop_counter import FlopCounterMode
 
 import plots
 from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
 from metrics import evaluate
-from models import build_model, get_device
+from models import build_model, count_flops, get_device
 
 """
 ====================================================================
@@ -210,12 +209,9 @@ n_params = sum(p.numel() for p in model.parameters())
 n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 size_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / 1e6
 
-# FLOPs for a single forward pass on one window
+# FLOPs for a single forward pass on one window (counted on CPU; see count_flops)
 model.eval()
-one = torch.randn(1, seq_len, config["model"]["input_dim"], device=device)
-with torch.no_grad(), FlopCounterMode(display=False) as fc:
-    model(one)
-flops_per_sample = fc.get_total_flops()
+flops_per_sample = count_flops(model, seq_len, config["model"]["input_dim"])
 
 
 def sync():

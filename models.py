@@ -16,6 +16,32 @@ def get_device():
     return device
 
 
+def count_flops(model, seq_len, in_dim):
+    """FLOPs for one forward pass on a single window, counted on CPU.
+
+    FLOPs are a device-independent property of the computation, but
+    FlopCounterMode only sees the ATen ops it has formulas for (mm/addmm/
+    conv/sdpa). On fused backends (CUDA cuDNN, MPS) nn.GRU/nn.LSTM run as a
+    single fused kernel that is *not* one of those ops, so the entire
+    recurrence is silently counted as zero and only the constant head shows
+    up — making every sequence length report the same FLOPs. On CPU the RNN
+    decomposes into per-timestep addmm calls, so the recurrence is counted
+    and every architecture goes through one identical, correct code path.
+    We therefore always count on CPU regardless of the run device.
+    """
+    from torch.utils.flop_counter import FlopCounterMode
+
+    was_training = model.training
+    orig_device = next(model.parameters()).device
+    model.eval().to("cpu")
+    one = torch.randn(1, seq_len, in_dim)
+    with torch.no_grad(), FlopCounterMode(display=False) as fc:
+        model(one)
+    model.to(orig_device)
+    model.train(was_training)
+    return fc.get_total_flops()
+
+
 class GRUModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers=1, dropout=0.1):
         super().__init__()
@@ -456,7 +482,9 @@ class TSMixer(nn.Module):
 
     def forward(self, x):
         # x shape [B, T, D]
-        last_frame = x[:, -1, :6]  # [B, 6] positions only (extra channels with velocity)
+        last_frame = x[
+            :, -1, :6
+        ]  # [B, 6] positions only (extra channels with velocity)
         # time and channel mixing layers
         for layer in self.mixer_layers:
             x = layer(x)
@@ -471,8 +499,6 @@ class TSMixer(nn.Module):
         return last_frame + y_mean[:, :6], y_logvar[:, :6].exp()
 
 
-
-
 class DLinear(nn.Module):
     def __init__(self, sequence_length, input_dim, output_dim, kernel_size):
         super().__init__()
@@ -483,29 +509,37 @@ class DLinear(nn.Module):
         self.pad = kernel_size // 2
         self.kernel_size = kernel_size
 
-        self.trend_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
-        self.season_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
-        self.logvar_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+        self.trend_linears = nn.ModuleList(
+            [nn.Linear(self.L, 1) for _ in range(self.C)]
+        )
+        self.season_linears = nn.ModuleList(
+            [nn.Linear(self.L, 1) for _ in range(self.C)]
+        )
+        self.logvar_linears = nn.ModuleList(
+            [nn.Linear(self.L, 1) for _ in range(self.C)]
+        )
 
     def forward(self, x):
         B, L, C = x.shape
         assert L == self.L and C == self.C
 
-        x_t = x.permute(0, 2, 1) # [B, D, T]
-        
-        front = x_t[:, :, 0:1].repeat(1, 1, self.pad) #copy the first element
-        end = x_t[:, :, -1:].repeat(1, 1, self.pad) #copy the last element
+        x_t = x.permute(0, 2, 1)  # [B, D, T]
+
+        front = x_t[:, :, 0:1].repeat(1, 1, self.pad)  # copy the first element
+        end = x_t[:, :, -1:].repeat(1, 1, self.pad)  # copy the last element
         x_padded = torch.cat([front, x_t, end], dim=-1)
-        
-        trend = F.avg_pool1d(x_padded, kernel_size=self.kernel_size, stride=1) # for each three elements takes the mean, with stride=1 the output has the same lenght and is the global (trend) movement
-        season = x_t - trend # oscillations wrt trend, small scale
+
+        trend = F.avg_pool1d(
+            x_padded, kernel_size=self.kernel_size, stride=1
+        )  # for each three elements takes the mean, with stride=1 the output has the same lenght and is the global (trend) movement
+        season = x_t - trend  # oscillations wrt trend, small scale
 
         # stack each set of per-channel Linear(L->1) weights into one [C, L] matrix
         # and run all channels as a single batched matmul instead of a Python loop
         # of 3*C tiny kernels (same arithmetic; big win at batch=1 real-time latency)
         def stack_linears(mods):
-            W = torch.stack([m.weight.squeeze(0) for m in mods])       # [C, L]
-            b = torch.stack([m.bias for m in mods]).squeeze(-1)        # [C]
+            W = torch.stack([m.weight.squeeze(0) for m in mods])  # [C, L]
+            b = torch.stack([m.bias for m in mods]).squeeze(-1)  # [C]
             return W, b
 
         Wt, bt = stack_linears(self.trend_linears)
@@ -523,9 +557,6 @@ class DLinear(nn.Module):
         return x[:, -1, :6] + mean_res[:, :6], logvar[:, :6].exp()
 
 
-
-
-
 class NLinear(nn.Module):
     """Normalized-Linear (Zeng et al. 2022), channel-independent.
 
@@ -537,7 +568,9 @@ class NLinear(nn.Module):
         self.L = sequence_length
         self.C = output_dim
         self.linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
-        self.logvar_linears = nn.ModuleList([nn.Linear(self.L, 1) for _ in range(self.C)])
+        self.logvar_linears = nn.ModuleList(
+            [nn.Linear(self.L, 1) for _ in range(self.C)]
+        )
 
     def forward(self, x):
         B, L, C = x.shape
@@ -546,13 +579,12 @@ class NLinear(nn.Module):
         x_t = x.permute(0, 2, 1)  # [B, D, T]
         x_norm = x_t - x_t[:, :, -1:]  # subtract last frame per channel
 
-        # stack the per-channel Linear(L->1) weights into one [C, L] matrix and
-        # run all channels as a single batched matmul instead of a Python loop
-        # of C tiny kernels (same arithmetic; big win at batch=1 real-time latency)
-        W_mean = torch.stack([lin.weight.squeeze(0) for lin in self.linears])          # [C, L]
-        b_mean = torch.stack([lin.bias for lin in self.linears]).squeeze(-1)           # [C]
-        W_lv = torch.stack([lin.weight.squeeze(0) for lin in self.logvar_linears])     # [C, L]
-        b_lv = torch.stack([lin.bias for lin in self.logvar_linears]).squeeze(-1)      # [C]
+        W_mean = torch.stack([lin.weight.squeeze(0) for lin in self.linears])  # [C, L]
+        b_mean = torch.stack([lin.bias for lin in self.linears]).squeeze(-1)  # [C]
+        W_lv = torch.stack(
+            [lin.weight.squeeze(0) for lin in self.logvar_linears]
+        )  # [C, L]
+        b_lv = torch.stack([lin.bias for lin in self.logvar_linears]).squeeze(-1)  # [C]
 
         pred_mean = torch.einsum("bcl,cl->bc", x_norm, W_mean) + b_mean
         pred_logvar = torch.einsum("bcl,cl->bc", x_t, W_lv) + b_lv
@@ -602,10 +634,15 @@ class ConformerConvModule(nn.Module):
         super().__init__()
         assert kernel_size % 2 == 1, "conv kernel must be odd for 'same' padding"
         self.norm = nn.LayerNorm(d_model)
-        self.pointwise1 = nn.Conv1d(d_model, 2 * d_model, 1)  # GLU halves back to d_model
+        self.pointwise1 = nn.Conv1d(
+            d_model, 2 * d_model, 1
+        )  # GLU halves back to d_model
         self.depthwise = nn.Conv1d(
-            d_model, d_model, kernel_size,
-            padding=(kernel_size - 1) // 2, groups=d_model,
+            d_model,
+            d_model,
+            kernel_size,
+            padding=(kernel_size - 1) // 2,
+            groups=d_model,
         )
         self.gnorm = nn.GroupNorm(1, d_model)
         self.act = nn.SiLU()
@@ -614,12 +651,11 @@ class ConformerConvModule(nn.Module):
 
     def forward(self, x):
         # x: [B, T, d_model]
-        h = self.norm(x).transpose(1, 2)        # [B, d_model, T]
-        h = F.glu(self.pointwise1(h), dim=1)    # [B, d_model, T]
+        h = self.norm(x).transpose(1, 2)  # [B, d_model, T]
+        h = F.glu(self.pointwise1(h), dim=1)  # [B, d_model, T]
         h = self.act(self.gnorm(self.depthwise(h)))
         h = self.dp(self.pointwise2(h))
-        return h.transpose(1, 2)               
-
+        return h.transpose(1, 2)
 
 
 class ConformerAttention(nn.Module):
@@ -755,7 +791,8 @@ class MambaBlock(nn.Module):
     @staticmethod
     def _scan(a, b):
         """Chunked parallel scan: h_t = a_t*h_{t-1}+b_t over [B,L,d_inner,d_state].
-        Splits L into ~sqrt(L) chunks to reduce sequential depth from L to ~2*sqrt(L)."""
+        Splits L into ~sqrt(L) chunks to reduce sequential depth from L to ~2*sqrt(L).
+        """
         B, L, Di, Ds = a.shape
         chunk = max(1, int(round(L**0.5)))
         pad = (-L) % chunk  # pad time at the end so L is a multiple of chunk
@@ -813,7 +850,7 @@ class MambaBlock(nn.Module):
 
     def forward(self, x):
         # x: [B, L, d_model]
-        L = x.size(1) #second dimension
+        L = x.size(1)  # second dimension
         x_in, z = self.in_proj(x).chunk(2, dim=-1)  # each [B, L, d_inner]
 
         # depthwise causal conv: drop the right padding so step t sees only <= t
