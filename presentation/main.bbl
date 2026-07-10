@@ -6,7 +6,7 @@
 %Control: page (0) single
 %Control: year (1) truncated
 %Control: production of eprint (0) enabled
-\begin{thebibliography}{4}%
+\begin{thebibliography}{5}%
 \makeatletter
 \providecommand \@ifxundefined [1]{%
  \@ifx{#1\undefined}
@@ -55,6 +55,9 @@
 \bibitem [{\citenamefont {Chen}\ \emph {et~al.}(2023)\citenamefont {Chen}, \citenamefont {Li}, \citenamefont {Yoder}, \citenamefont {Arik},\ and\ \citenamefont {Pfister}}]{chen2023tsmixerallmlparchitecturetime}%
   \BibitemOpen
   \bibfield  {author} {\bibinfo {author} {\bibfnamefont {S.-A.}\ \bibnamefont {Chen}}, \bibinfo {author} {\bibfnamefont {C.-L.}\ \bibnamefont {Li}}, \bibinfo {author} {\bibfnamefont {N.}~\bibnamefont {Yoder}}, \bibinfo {author} {\bibfnamefont {S.~O.}\ \bibnamefont {Arik}},\ and\ \bibinfo {author} {\bibfnamefont {T.}~\bibnamefont {Pfister}},\ }\href {https://arxiv.org/abs/2303.06053} {\bibinfo {title} {Tsmixer: An all-mlp architecture for time series forecasting}} (\bibinfo {year} {2023}),\ \Eprint {https://arxiv.org/abs/2303.06053} {arXiv:2303.06053 [cs.LG]} \BibitemShut {NoStop}%
+\bibitem [{\citenamefont {Lea}\ \emph {et~al.}(2016)\citenamefont {Lea}, \citenamefont {Flynn}, \citenamefont {Vidal}, \citenamefont {Reiter},\ and\ \citenamefont {Hager}}]{lea2016temporalconvolutionalnetworksaction}%
+  \BibitemOpen
+  \bibfield  {author} {\bibinfo {author} {\bibfnamefont {C.}~\bibnamefont {Lea}}, \bibinfo {author} {\bibfnamefont {M.~D.}\ \bibnamefont {Flynn}}, \bibinfo {author} {\bibfnamefont {R.}~\bibnamefont {Vidal}}, \bibinfo {author} {\bibfnamefont {A.}~\bibnamefont {Reiter}},\ and\ \bibinfo {author} {\bibfnamefont {G.~D.}\ \bibnamefont {Hager}},\ }\href {https://arxiv.org/abs/1611.05267} {\bibinfo {title} {Temporal convolutional networks for action segmentation and detection}} (\bibinfo {year} {2016}),\ \Eprint {https://arxiv.org/abs/1611.05267} {arXiv:1611.05267 [cs.CV]} \BibitemShut {NoStop}%
 \bibitem [{\citenamefont {Nie}\ \emph {et~al.}(2023)\citenamefont {Nie}, \citenamefont {Nguyen}, \citenamefont {Sinthong},\ and\ \citenamefont {Kalagnanam}}]{nie2023timeseriesworth64}%
   \BibitemOpen
   \bibfield  {author} {\bibinfo {author} {\bibfnamefont {Y.}~\bibnamefont {Nie}}, \bibinfo {author} {\bibfnamefont {N.~H.}\ \bibnamefont {Nguyen}}, \bibinfo {author} {\bibfnamefont {P.}~\bibnamefont {Sinthong}},\ and\ \bibinfo {author} {\bibfnamefont {J.}~\bibnamefont {Kalagnanam}},\ }\href {https://arxiv.org/abs/2211.14730} {\bibinfo {title} {A time series is worth 64 words: Long-term forecasting with transformers}} (\bibinfo {year} {2023}),\ \Eprint {https://arxiv.org/abs/2211.14730} {arXiv:2211.14730 [cs.LG]} \BibitemShut {NoStop}%
