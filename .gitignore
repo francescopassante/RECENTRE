@@ -10,4 +10,11 @@ presentation/*.fls
 presentation/*.log
 presentation/*.out
 presentation/*.synctex.gz
+presentation/*.synctex(busy)
 presentation/mainNotes.bib
+presentation/main.bbl
+presentation/main.blg
+presentation/main.pdf
+
+distill/
+results/benchmark/

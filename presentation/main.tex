@@ -18,7 +18,7 @@ nofootinbib
 
 \title{Advanced Machine Learning for Physics student project: RECENTRE}
 
-\author{Francesco Il Passero}
+\author{Francesco Passante}
 
 \author{Eugenio Nicotina}
 
@@ -353,7 +353,6 @@ Where the 2-strided input is kept to avoid using in-between frames that the mode
 We see from the results that we gain at most 0.002 ($\sim 1\%$) from the base model. This very small gain is not sufficient to conclude that the jerk penalty improves prediction accuracy. A possible future extension of this project could be to train many models and to associate a statistical error to the test performance so that an actual statistical edge could be confirmed or ruled out.
 
 
-
 \subsection{NLinear}
 
 The lightest model we implemented is the NLinear model~\cite{zeng2022transformers} with $\mathcal{O}(L)$ parameters, $L$ being the sequence length. The architecture philosophy is to center the whole window with respect to the last frame and apply six independent linear layers (one for each channel) to predict the shift of the next frame, and another six to predict the associated variance.
@@ -366,12 +365,12 @@ The DLinear model~\cite{zeng2022transformers} is among the lightest models as we
 
 \subsection{TSMixer}
 
-The Time-Series Mixer~\cite{chen2023tsmixerallmlparchitecturetime} (TSMixer) is composed mainly of linear layers as well with the advantage of mixing operations along both the time and feature dimensions. Four TSMixer layers are applied in sequence, each of them composed of a linear layer among the frames and a multi-layer perceptron among the features; plus the activation functions, dropout and residual connections. 
+The Time-Series Mixer~\cite{chen2023tsmixerallmlparchitecturetime} (TSMixer) is composed mainly of linear layers as well with the advantage of mixing operations along both the time and feature dimensions. Four TSMixer layers are applied in sequence, each of them composed of a linear layer among the frames and a multi-layer perceptron among the features; plus the activation functions, dropout and residual connections.
 
 
 \subsection{TCN}
 
-Shifting from only linear layers to convolutional ones, the first new model we implemented is a temporal convolutional network~\cite{lea2016temporalconvolutionalnetworksaction} (TCN). This network uses temporal convolution kernels at various level of dilation to analyze both long and short range patterns. A schematic diagram of the network is found in Fig.~(\ref{fig:tcn_diagram}).
+Shifting from only linear layers to convolutional ones, the first new model we implemented is a temporal convolutional network~\cite{lea2016temporalconvolutionalnetworksaction} (TCN). This network uses temporal convolution kernels at various levels of dilation to analyze both long and short range patterns. A schematic diagram of the network is found in Fig.~(\ref{fig:tcn_diagram}).
 
 \begin{figure}
     \includegraphics[width=0.8 \linewidth]{figures/tcn_diagram.png}
@@ -380,7 +379,6 @@ Shifting from only linear layers to convolutional ones, the first new model we i
 \end{figure}
 
 The TCN model showed remarkable performances, competitive with the original GRU architecture.
-
 
 
 \subsection{Transformer}
@@ -393,19 +391,14 @@ The next model implemented is a basic transformer with two encoder-only layers m
 A transformer-based model for time forecasting is the patch time series Transformer~\cite{nie2023timeseriesworth64} (PatchTST). It enforces a channel-independent analysis: for each channel the window is segmented into multiple patches that are fed as input tokens to the transformer. Also, all channels share the same embedding and transformer weights.
 
 
-
-
 \subsection{Conformer}
 
 A conformer model~\cite{gulati2020conformerconvolutionaugmentedtransformerspeech} is an architecture that combines transformers and convolutional neural networks (CNN). The former is specialized to analyze long range patterns, while the latter is specialized to analyze short range ones, making the hybrid architecture extremely powerful and indeed the most successful one in our study. From the transformer it inherits the positional embedding, the feed forward and the multi head self-attention. From the CNN it inherits a 1D-convolutional layer with kernel size 1 that doubles the channels number using the same weights across all frames, and performs a Gated Linear Unit (GLU). Another 1D-convolutional layer is applied, this time channel independent with kernel size greater than 1 to capture high frequency patterns, and after the activation function another 1D-convolutional layer with kernel size 1 is applied (followed by dropout) to mix all features before feeding the transformed data to the two linear layers that predict the shift of the next frame and the corresponding variance.
 
 
-
 \subsection{Mamba}
 
 mamba
-
-
 
 
 \subsection{Routing over experts}
@@ -441,12 +434,75 @@ We trained 9 different architectures with 4 sequence lengths each. We compare al
 
 To have a more visual look at the data, we create a set of Pareto-optimal frontier visualizations. We plot accuracy ($FD_{gain}$) on the y-axis and cost (latency, FLOPs, size) on the x-axis. We also do a scatterplot of $FD_{gain}$ vs. noise tolerance, although the clear linear term simply shows that all models lose accuracy in the same way when noise is added, there is no clear 'noise-robust' winner, just a better model overall which needs more noise to be brought down in accuracy. The plots are shown in Fig. (\ref{fig:pareto-plots})
 
+\begin{table*}[t]
+\centering
+\caption{Architecture benchmark. Best checkpoint per architecture and sequence length, sorted by mean $FD_{gain}$. Columns: sequence length, parameter count, checkpoint size, FLOPs, single-frame latency, throughput, mean FD, mean $FD_{gain}$, percentage of frames improved over baseline, NLL, relative FD degradation at $0.3\sigma$ added noise, and noise tolerance.}
+\label{tab:benchmark}
+\footnotesize
+\begin{tabular}{l r r r r r r r r r r r r}
+\toprule
+Arch & Seq & Params & Size (MB) & FLOPs (M) & Lat (ms) & Thrpt (k/s) & Mean FD & $FD_{gain}$ & \%$>$0 & NLL & $\Delta$FD@$0.3\sigma$ \% & Tol $\sigma$ \\
+\midrule
+conformer   & 128 & 199{,}436 & 0.798 & 40.38 & 2.991 & 42   & 0.1213 & 0.2159 & 80.2 & $-2.299$ & $+390$ & 0.04 \\
+conformer   & 64  & 199{,}436 & 0.798 & 20.19 & 2.920 & 87   & 0.1198 & 0.2131 & 80.1 & $-2.290$ & $+395$ & 0.04 \\
+mamba       & 128 & 95{,}500  & 0.382 & 22.73 & 6.991 & 12   & 0.1245 & 0.2020 & 79.3 & $-2.269$ & $+378$ & 0.04 \\
+mamba       & 64  & 95{,}500  & 0.382 & 11.37 & 5.606 & 31   & 0.1214 & 0.1995 & 78.8 & $-2.272$ & $+389$ & 0.04 \\
+conformer   & 32  & 199{,}436 & 0.798 & 10.10 & 2.846 & 160  & 0.1222 & 0.1970 & 79.2 & $-2.261$ & $+387$ & 0.04 \\
+gru         & 128 & 174{,}476 & 0.698 & 0.04  & 0.630 & 163  & 0.1265 & 0.1957 & 79.4 & $-2.244$ & $+371$ & 0.04 \\
+gru         & 64  & 174{,}476 & 0.698 & 0.04  & 0.568 & 279  & 0.1255 & 0.1921 & 79.3 & $-2.244$ & $+374$ & 0.04 \\
+transformer & 128 & 73{,}228  & 0.293 & 0.30  & 1.055 & 86   & 0.1257 & 0.1907 & 78.4 & $-2.254$ & $+376$ & 0.04 \\
+mamba       & 32  & 95{,}500  & 0.382 & 5.70  & 5.289 & 46   & 0.1236 & 0.1858 & 78.1 & $-2.249$ & $+382$ & 0.04 \\
+transformer & 64  & 73{,}228  & 0.293 & 0.16  & 1.043 & 186  & 0.1248 & 0.1850 & 78.1 & $-2.253$ & $+377$ & 0.04 \\
+gru         & 32  & 174{,}476 & 0.698 & 0.04  & 0.539 & 434  & 0.1278 & 0.1762 & 78.5 & $-2.211$ & $+367$ & 0.03 \\
+transformer & 32  & 73{,}228  & 0.293 & 0.08  & 1.122 & 332  & 0.1273 & 0.1709 & 77.4 & $-2.221$ & $+368$ & 0.03 \\
+tcn         & 64  & 71{,}276  & 0.285 & 10.43 & 3.546 & 273  & 0.1300 & 0.1700 & 78.1 & $-2.202$ & $+359$ & 0.03 \\
+tcn         & 128 & 71{,}276  & 0.285 & 19.11 & 3.854 & 169  & 0.1317 & 0.1690 & 77.5 & $-2.205$ & $+353$ & 0.03 \\
+conformer   & 10  & 199{,}436 & 0.798 & 3.16  & 2.839 & 349  & 0.1274 & 0.1675 & 77.4 & $-2.206$ & $+369$ & 0.03 \\
+tcn         & 32  & 71{,}276  & 0.285 & 6.08  & 3.572 & 289  & 0.1315 & 0.1569 & 77.1 & $-2.176$ & $+355$ & 0.03 \\
+mamba       & 10  & 95{,}500  & 0.382 & 1.79  & 4.521 & 131  & 0.1289 & 0.1556 & 76.3 & $-2.191$ & $+363$ & 0.03 \\
+gru         & 10  & 174{,}476 & 0.698 & 0.04  & 0.524 & 704  & 0.1313 & 0.1533 & 77.1 & $-2.166$ & $+354$ & 0.03 \\
+transformer & 10  & 73{,}228  & 0.293 & 0.03  & 1.061 & 772  & 0.1311 & 0.1478 & 76.1 & $-2.183$ & $+356$ & 0.03 \\
+tcn         & 10  & 71{,}276  & 0.285 & 3.10  & 3.571 & 288  & 0.1346 & 0.1392 & 76.3 & $-2.150$ & $+345$ & 0.03 \\
+TSMixer     & 64  & 18{,}042  & 0.072 & 0.74  & 1.998 & 476  & 0.1383 & 0.1160 & 73.9 & $-2.168$ & $+314$ & 0.03 \\
+TSMixer     & 128 & 67{,}578  & 0.270 & 2.66  & 2.103 & 475  & 0.1478 & 0.0857 & 71.5 & $-2.071$ & $+278$ & 0.02 \\
+TSMixer     & 32  & 5{,}562   & 0.022 & 0.22  & 2.028 & 480  & 0.1518 & 0.0609 & 71.2 & $-2.011$ & $+278$ & 0.02 \\
+dlinear     & 32  & 1{,}782   & 0.007 & 0.00  & 0.906 & 1144 & 0.1534 & 0.0539 & 71.2 & $-0.865$ & $+232$ & 0.02 \\
+nlinear     & 32  & 396       & 0.002 & 0.00  & 0.501 & 2010 & 0.1533 & 0.0538 & 70.8 & $-1.028$ & $+234$ & 0.02 \\
+nlinear     & 64  & 780       & 0.003 & 0.00  & 0.501 & 2044 & 0.1540 & 0.0534 & 70.9 & $-1.012$ & $+231$ & 0.02 \\
+dlinear     & 64  & 3{,}510   & 0.014 & 0.01  & 0.895 & 1134 & 0.1538 & 0.0500 & 69.8 & $-1.496$ & $+229$ & 0.02 \\
+nlinear     & 128 & 1{,}548   & 0.006 & 0.00  & 0.497 & 1927 & 0.1557 & 0.0495 & 69.6 & $-0.479$ & $+229$ & 0.02 \\
+dlinear     & 128 & 6{,}966   & 0.028 & 0.01  & 0.882 & 1136 & 0.1555 & 0.0486 & 69.2 & $-1.245$ & $+228$ & 0.02 \\
+dlinear     & 10  & 594       & 0.002 & 0.00  & 0.935 & 1052 & 0.1521 & 0.0469 & 69.5 & $-1.749$ & $+224$ & 0.02 \\
+nlinear     & 10  & 132       & 0.001 & 0.00  & 0.493 & 2025 & 0.1525 & 0.0413 & 68.5 & $-1.676$ & $+222$ & 0.02 \\
+patchTST    & 128 & 23{,}330  & 0.093 & 19.17 & 1.776 & 21   & 0.1553 & 0.0397 & 68.4 & $-2.059$ & $+194$ & 0.02 \\
+patchTST    & 32  & 18{,}722  & 0.075 & 4.79  & 1.687 & 67   & 0.1551 & 0.0355 & 69.5 & $-1.986$ & $+207$ & 0.02 \\
+patchTST    & 64  & 20{,}258  & 0.081 & 9.58  & 1.659 & 42   & 0.1571 & 0.0347 & 69.0 & $-1.895$ & $+216$ & 0.01 \\
+patchTST    & 10  & 17{,}666  & 0.071 & 1.50  & 1.750 & 134  & 0.1547 & 0.0344 & 69.4 & $-1.982$ & $+203$ & 0.02 \\
+TSMixer     & 10  & 1{,}734   & 0.007 & 0.04  & 2.017 & 477  & 0.1664 & $-0.0002$ & 53.1 & $-0.143$ & $+263$ & 0.00 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{../results/benchmark/benchmark_pareto.png}
+    \caption{Pareto-optimal frontier visualizations. $FD_{gain}$ (accuracy) is plotted against the different cost axes (latency, FLOPs, size) and against noise tolerance. The conformer leads on accuracy, the mamba follows, and the GRU offers the best accuracy-per-latency trade-off.}
+    \label{fig:pareto-plots}
+\end{figure*}
+
 
 \subsection{Distillation}
 
 From the pareto-optimal frontier it is clear that the best performing model is the conformer, followed by the mamba and then by the GRU. Given the large difference in latency between the GRU and the conformer, it'd be ideal to push the GRU to have higher accuracy while still keeping their remarkably low latency. To achieve such goal, we tried knowledge distillation from the conformer onto the GRU. 
 
-In particular, distillation happens on two separate spaces: the output space (mean, var) and the latent space, just before the fully connected heads. Both models indeed send the output of their architecture-specific latent space onto a fc mean head and a fc var head. We therefore use the latent space before the fc heads to distill the conformer onto the GRU. Since these latent spaces have different dimensions, we first linearly project the student latent space to the teacher's, and then simply use MSE loss to bring the latent feature closer to each other. For the output space, we use the KL divergence between the normal distributions (mean, var) outputted by the two models. The results are shown in Table \ref{table:distillation} and Fig. \ref{fig:pareto-plots-distillation}. As we can see, we succedeed in achieving significantly higher $FD_{gain}$ while retaining the very low latency of the GRU model. In future work, this distillation process could be optimized over the various hyperparameters weighing the latent space or output space contributions and the temperature of the teachers' soft labels. 
+In particular, distillation happens on two separate spaces: the output space (mean, var) and the latent space, just before the fully connected heads. Both models indeed send the output of their architecture-specific latent space onto a fc mean head and a fc var head. We therefore use the latent space before the fc heads to distill the conformer onto the GRU. Since these latent spaces have different dimensions, we first linearly project the student latent space to the teacher's, and then simply use MSE loss to bring the latent feature closer to each other. For the output space, we use the KL divergence between the normal distributions (mean, var) outputted by the two models. The results are shown in Table \ref{table:distillation} and Fig. \ref{fig:pareto-plots-distillation}. As we can see, we succedeed in achieving significantly higher $FD_{gain}$ while retaining the very low latency of the GRU model. In future work, this distillation process could be optimized over the various hyperparameters weighing the latent space or output space contributions and the temperature of the teachers' soft labels.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{../results/benchmark/benchmark_pareto_distill.png}
+    \caption{Pareto-optimal frontier visualizations including the conformer-distilled GRU. The distilled GRU attains a substantially higher $FD_{gain}$ than the vanilla GRU while retaining the GRU's very low latency, moving it toward the accuracy of the heavier conformer/mamba experts.}
+    \label{fig:pareto-plots-distillation}
+\end{figure*}
 
 \section{Discussion}
 
