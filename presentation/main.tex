@@ -417,6 +417,16 @@ The self attention module is the classical self-attention of other transformer a
 
 The whole idea of the conformer is to use attention to learn long range interactions and convolution to learn short range, seasonal changes.
 
+\subsection{Mamba}
+State space models recently recieved a lot of interest, mainly due to their representation learning ability. SSMs have a clear physics-inspired architecture, where a hidden state is progressively updated based on the input sequence. Like RNNs, however, they historically suffer from the lack of ability to have content-aware reasoning, since the update parameters are not content-dependent, but fixed after training. Recent SSMs like Mamba address this exact problem by allowing a data-dependent selection mechanism, taking the best advantage of transformers (content-dependent reasoning) with the best advantage of RNNs (linear scaling with sequence length). We therefore tried to implement a Mamba architecture for our multivariate time series forecasting task. 
+Very schematically, a Mamba model updates its hidden state via three content-dependent quantities $\Delta, B, C$ and a content-indpendent quantity $A$. In particular, the fundamental update equation is:
+
+\begin{equation}
+    h_{t+1} = e^{\Delta(x_t) A} h_t + \Delta(x_t)B(x_t) f(x_t)
+\end{equation}
+
+Since $A$ is a negative matrix, large $\Delta(x_t)$ means the previous hidden state is forgotten, and the current input contributes a lot to the hidden state, while small $\Delta(x_t)$ means the previous hidden state is retained, and the current input doesn't contribute much to it. This content dependance of $\Delta$ on $x(t)$ makes the mamba content-dependent and thus achieves optimal results in many tasks where transformers are very good at, while having a linear scaling vs. the quadratic scaling of standard attention. Our Mamba implementation is indeed the second best model of our benchmark, despite our implementation not being fully optimized.
+
 
 \subsection{Model comparisons}
 We trained 9 different architectures with 4 sequence lengths each. We compare all of them among very different metrics, from test accuracy to model size to noise robustness. In particular, we rank the models based on $FD_{gain}$, but we report, for all of them:  number of parameters, size, FLOPs, latency, throughput, FD,  $FD_{gain}$,  $\%FD_{gain}>0$, NLL, $ \Delta FD@0.3\sigma$ (relative increase in FD when 0.3 $\sigma$ noise is added to the data), tolerance to noise ($\sigma$ of the injected noise at which the model becomes worse than the clean baseline). We report the full results in Table \ref{tab:benchmark}.

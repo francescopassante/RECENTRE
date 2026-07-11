@@ -783,6 +783,7 @@ class MambaBlock(nn.Module):
         self.x_proj = nn.Linear(d_inner, self.dt_rank + 2 * d_state, bias=False)
         self.dt_proj = nn.Linear(self.dt_rank, d_inner)  # Delta = softplus(dt_proj(.))
         # diagonal state matrix A (negative), stored in log space; D is the skip term
+        # matrix [[1, ..., d_state], [1, ..., d_state], ...]
         A = torch.arange(1, d_state + 1, dtype=torch.float).repeat(d_inner, 1)
         self.A_log = nn.Parameter(torch.log(A))  # [d_inner, d_state]
         self.D = nn.Parameter(torch.ones(d_inner))
@@ -829,37 +830,41 @@ class MambaBlock(nn.Module):
         return h.reshape(B, Lp, Di, Ds)[:, :L]
 
     def ssm(self, x):
-        # x: [B, L, d_inner]
+        # x: [B, T, d_inner]
         A = -torch.exp(self.A_log)  # [d_inner, d_state]
-        deltaBC = self.x_proj(x)  # [B, L, dt_rank + 2*d_state]
+
+        # Linearly project x to delta, B and C
+        deltaBC = self.x_proj(x)  # [B, T, dt_rank + 2*d_state]
         delta, Bm, Cm = torch.split(
             deltaBC, [self.dt_rank, self.d_state, self.d_state], dim=-1
         )
-        delta = F.softplus(self.dt_proj(delta))  # [B, L, d_inner], > 0
+        delta = F.softplus(self.dt_proj(delta))  # [B, T, d_inner], > 0
 
         # zero-order-hold discretization of the diagonal SSM
-        deltaA = torch.exp(delta.unsqueeze(-1) * A)  # [B, L, d_inner, d_state]
+        deltaA = torch.exp(delta.unsqueeze(-1) * A)  # [B, T, d_inner, d_state]
         deltaBx = (
             delta.unsqueeze(-1) * Bm.unsqueeze(2) * x.unsqueeze(-1)
-        )  # [B, L, d_inner, d_state]
+        )  # [B, T, d_inner, d_state]
 
         # chunked parallel scan, then contract the state with C in one vectorized op
-        h = self._scan(deltaA, deltaBx)  # [B, L, d_inner, d_state]
+        h = self._scan(deltaA, deltaBx)  # [B, T, d_inner, d_state]
         y = torch.einsum("blds,bls->bld", h, Cm)  # y_t = <h_t, C_t>
         return y + x * self.D  # skip connection through D
 
     def forward(self, x):
-        # x: [B, L, d_model]
-        L = x.size(1)  # second dimension
-        x_in, z = self.in_proj(x).chunk(2, dim=-1)  # each [B, L, d_inner]
+        # x: [B, T, d_model]
+        T = x.size(1)
+        x_in, z = self.in_proj(x).chunk(
+            2, dim=-1
+        )  # linear project d_model -> 2*expand*d_model, then split in 2 (expand*d_model=d_inner)
 
-        # depthwise causal conv: drop the right padding so step t sees only <= t
-        x_in = self.conv1d(x_in.transpose(1, 2))[..., :L].transpose(1, 2)
+        # temporal causal convolution, channel independent, keeps d_inner channels
+        x_in = self.conv1d(x_in.transpose(1, 2))[..., :T].transpose(1, 2)
         x_in = F.silu(x_in)
 
-        y = self.ssm(x_in)  # [B, L, d_inner]
+        y = self.ssm(x_in)  # [B, T, d_inner]
         y = y * F.silu(z)  # gated output
-        return self.out_proj(y)  # [B, L, d_model]
+        return self.out_proj(y)  # [B, T, d_model]
 
 
 class MambaModel(nn.Module):
@@ -875,11 +880,7 @@ class MambaModel(nn.Module):
         dropout=0.1,
         use_checkpoint=True,
     ):
-        """Selective-SSM backbone with the repo's shared two-head MLP. Same
-        prediction contract as the other models: input [B, T, input_dim] ->
-        (mean, variance); the mean head predicts a residual added to the last input
-        frame, variance is returned exponentiated.
-
+        """
         use_checkpoint recomputes each block's scan in backward instead of storing
         it -- the chunked scan is cheap to recompute, so this cuts peak activation
         memory from O(num_layers) big [B,L,d_inner,d_state] tensors to O(1) at a
@@ -911,7 +912,7 @@ class MambaModel(nn.Module):
 
     def forward(self, x):
         # x: [B, T, input_dim]
-        h = self.input_proj(x)
+        h = self.input_proj(x)  # [B, T, d_model]
         for blk in self.blocks:
             # pre-norm residual; checkpoint the (norm -> mixer) recompute in backward
             if self.use_checkpoint and self.training:
