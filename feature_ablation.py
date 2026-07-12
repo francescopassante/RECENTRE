@@ -60,9 +60,29 @@ for label, add_vel, add_acc, input_dim in VARIANTS:
     checkpoint_paths[label] = os.path.join(out_dir, f"{name}.pth")
 
     print(f"\n=== training {label} (input_dim={input_dim}) ===")
-    # let train.py inherit our stdout/stderr so its tqdm progress bar renders
-    # live in the terminal (piping it would swallow the carriage-return updates)
-    subprocess.run([sys.executable, "train.py", config_path], check=True)
+    # train.py's tqdm bars use \r to redraw in place, which only works on an
+    # interactive tty; captured through a pipe every update becomes its own
+    # line. Filter down to one line per epoch (the outer bar's postfix, set
+    # once per epoch in engine.py) and drop the per-batch inner-bar spam.
+    proc = subprocess.Popen(
+        [sys.executable, "train.py", config_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    buf = ""
+    for ch in iter(lambda: proc.stdout.read(1), ""):
+        if ch in "\r\n":
+            line = buf.strip()
+            buf = ""
+            if line and ("%|" not in line or "train_loss=" in line):
+                print(line)
+        else:
+            buf += ch
+    proc.wait()
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, proc.args)
 
 """
 =========
