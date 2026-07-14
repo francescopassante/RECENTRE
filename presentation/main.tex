@@ -36,7 +36,7 @@ Model size, inference latency, robustness to noise and uncertainty calibration a
 
 The RECENTRE project is concerned with real time prediction and correction of head motion parameters. A crucial fact to take into account when building models for this task is the inference latency of the model. The temporal distance between the frame recording and the subsequent next frame prediction must be of the order of $100$ ms, so the inference latency must be well below this limit to account for other software- and hardware-related latencies. 
 
-The main goals of the present project are to reproduce the original paper's (\cite{}) results, which are based on a GRU network, and evaluate modern machine learning architectures such as transformers, TCNs, and physics-informed models to study whether they are better candidates for the project's task.
+The main goals of the present project are to reproduce the original paper's (\cite{argiento2025realtimemotioncorrectionmagnetic}) results, which are based on a GRU network, and evaluate modern machine learning architectures such as transformers, TCNs, and physics-informed models to study whether they are better candidates for the project's task.
 
 Given the large amount of models and the large amount of training runs (different model hyperparameters, different train / test tasks, data augmentation, etc...) we introduced a config-based software design pattern to keep the code and the output data well organized. This way, new models can be implemented and registered in a model registry dictionary;
 the hyperparameters of the model, the preprocessing pipeline of the data and the training details (epochs, learning rate, ...) can all be specified in a minimal, easy-to-read configuration file. This way, we built a solid end-to-end pipeline from the original raw data and model specification to the full training and evaluation loop. 
@@ -46,7 +46,7 @@ the hyperparameters of the model, the preprocessing pipeline of the data and the
 
 The raw dataset is taken from the Human Connectome Project (HCP), which consists in navigator data taken by MRI machines with a sampling frequency of $720$ ms. Each 'frame' has 6 motion parameters: 3 of them are translation parameters describing the head position of the patient, the remaining 3 are rotation parameters indicating the inclination of the patient's head. The dataset contains three different scenarios: the "R" (resting) one, where patients were resting while the MRI scan was running, then the "M" (memory) one, where patients were recollecting memories, and the "L" (language) one, where patients were actively talking.
 There are a total of 3221 time series among the three tasks. Each time series is associated with a patient. The preprocessing pipeline discards 140 time series, so that 1027 patients are all associated with the 3 time series of the "R", "M", "L" tasks. The three tasks have different time lengths. The R data is 1200 frames long, while the M and L are 405 and 316 frames long, respectively.
-Lots of efforts were put in the thesis and paper (\cite{}) to study different data splits for training and testing, e.g. considering the "cross-task" scenario or "cross-patient" scenario.
+Lots of effort was put in the thesis and paper to study different data splits for training and testing, e.g. considering the "cross-task" scenario or "cross-patient" scenario.
 We build on their findings (no substantial difference in performance among the different scenarios) by: 
 
 \begin{enumerate}
@@ -54,7 +54,7 @@ We build on their findings (no substantial difference in performance among the d
     \item Standardizing all results to the same scenario: train on all tasks (R+M+L) and test on all tasks (R+M+L), while keeping disjoint sets of patients to avoid any possible leakage
 \end{enumerate}
 
-% Commentare che questo fatto di trainare e testare su tutto è ovviamente la cosa migliore, i risultati migliorano, più dati, un unico modello da mandare in inferenza, ...
+The thesis' showed that all cross-task combinations or cross-patients combinations had essentially identical performances. This suggested to us that training a single model with all three tasks would probably yield better performances (more data, covering the whole training distribution) and facilitate inference, as we have a single model regardless of the testing task. Our analysis indeed showed that this was the case.
 
 \begin{figure}[h]
     \centering
@@ -68,7 +68,7 @@ A subsequent analysis on physics-informed models has shown that exploiting addit
 
 \subsection{Data augmentation}
 
-The dataset contains roughly 2 million input window - frame target pairs, so data augmentation is not a priority for the project. Nevertheless, we investigated whether data augmentation could provide a benefit to model performances. Since the translation and rotation parameters are physically linked, there is no much room for independent transformations of the input data. However, two possible transformations are considered for data augmentation: time reversal and sign flip. These two augmentation techniques can quadruple the initial training dataset.
+The dataset contains roughly 2 million input window - frame target pairs, while our models have $O(100k)$ parameters. Data augmentation is therefore not a priority for the project. Nevertheless, we investigated whether data augmentation could provide a benefit to model performances. Since the translation and rotation parameters are physically linked, there is no much room for independent transformations of the input data. However, two possible transformations are considered for data augmentation: time reversal and sign flip. These two augmentation techniques can quadruple the initial training dataset.
 
 
 \subsection{Preprocessing}
@@ -92,7 +92,7 @@ All the tested models follow the same protocol:
 
 After model definition, typically as a torch module, a training config is necessary to run the training loop. The model hyperparameters, training and testing tasks, split percentages, data augmentation, loss function, training epochs, learning rate and so on are all specified in the training config, so that all the relevant parameters are easy to read, especially for systmeatic comparisons between many different models and runs.
 
-After the training is done, the model weights, the optimizer and scheduler states, training configs, info about the training and testing tasks and patient ids are stored in a checkpoint to be used for testing, finetuning or resuming training. 
+After the training is done, the model weights, the optimizer and scheduler states, the training config, the training and testing tasks and patient ids are stored in a checkpoint to be used for testing, finetuning or resuming training. 
 
 \subsection{Metrics}
 
@@ -146,28 +146,28 @@ It differs from the pre-training loss function because it lacks an uncertainty c
 \end{equation}
 where $w^0_i$ is the i-th pretrained model weight.
 
-Our own implementation aims to standardize this procedure across all the implemented models, and make all the finetuning parameters readily accessible in a dedicated finetuning config file. Each model inherits from a TunableModel base class that automatically splits the model parameters into a frozen variance head, a higher learning rate mean head and a lower learning rate body. The learning rates and the dropout rate are configurable in the finetuning config.
+Our own implementation aims to standardize this procedure across all the implemented models, and make all the finetuning parameters readily accessible in a dedicated finetuning config file. All models share the same output maps: two fully connected heads from the latent space of the model to the (mean, var) predictions. Using the proper name convention, all models are therefore finetuned in the same way, using different learning rates for the tunable head and the rigid body.
 
 
 \section{Reproduction of previous results}
 
 The first part of the project is concerned with reproducing the results of the previous thesis and paper. First, we refactored the codebase, fixed minor bugs and organized it in a config-oriented design, with standardization of train/test scenarios, model definitions, finetuning pipeline, model / data / train hyperparameters, data analysis and visualizations. 
 
-Then, we focused on reproducing these GRU results from the previous work:
+Then, we focused on reproducing the results from the previous work:
 \begin{enumerate}
     \item Paper main result: $R^2 > 0.87$ for all the 3 tasks and 6 dimensions.
     \item Thesis result: roughly $70\%$ frames have $FD_{gain} > 0$.
     \item Thesis result: positive $FD_{gain}$ frames percentage rises to $75\%$ for the finetuned model.
 \end{enumerate}
 
-We first reproduced the original results by considering the per-task training and testing, but we soon decided to directly improve these results by adopting some fairly obvious refinements on top of the original structure. First, we dropped the cross-task scenario debate and decided to train and test a single model on all three tasks. We obviously used different patients for the train, validation and test splits to avoid any data leakage. The hyperparameters of the model are left the same. The results are visible in Fig. (\ref{fig:reproduce_gru_results})
+We first reproduced the original results by considering the per-task training and testing, but we soon decided to directly improve these results by adopting some fairly obvious refinements on top of the original structure. First, we dropped the cross-task scenario debate and decided to train and test a single model on all three tasks. We used different patients for the train, validation and test splits to avoid any data leakage. The hyperparameters of the model are left the same. The results are visible in Fig. (\ref{fig:reproduce_gru_results})
 
 
 \begin{figure*}[t]
     \centering
     \begin{subfigure}{\textwidth}
         \centering
-        \includegraphics[width=0.78\textwidth]{../results/gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone/02_true_vs_predicted_gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone.png}
+        \includegraphics[width=0.78\textwidth]{figures/gru_true_vs_predicted.png}
         \caption{True vs.\ predicted value for each of the six motion dimensions, with per-dimension $R^2$. All dimensions reach $R^2 > 0.94$.}
         \label{fig:reproduce_true_vs_pred}
     \end{subfigure}
@@ -176,7 +176,7 @@ We first reproduced the original results by considering the per-task training an
 
     \begin{subfigure}{\textwidth}
         \centering
-        \includegraphics[width=0.92\textwidth]{../results/gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone/03_fd_distribution_gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone.png}
+        \includegraphics[width=0.92\textwidth]{figures/gru_fd_distribution.png}
         \caption{Framewise-displacement distribution of the model vs.\ the lag-1 baseline (left) and the per-sample $FD_{gain}$ distribution (right): $74.8\%$ of samples are improved over the baseline.}
         \label{fig:reproduce_fd_distribution}
     \end{subfigure}
@@ -185,7 +185,7 @@ We first reproduced the original results by considering the per-task training an
 
     \begin{subfigure}{\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{../results/gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone/04_per_patient_fdg_gru_R+M+LvR+M+L_beta0.5_ep150_onR+M+L_thresholdNone.png}
+        \includegraphics[width=\textwidth]{figures/gru_per_patient_fdg.png}
         \vspace{-0.5em}
         \caption{Per-patient mean $FD_{gain}$ sorted within each task (over $92\%$ of patients improved in every task) and per-patient baseline vs.\ model FD (rightmost panel).}
         \label{fig:reproduce_per_patient}
@@ -202,7 +202,7 @@ We also reproduced the per-patient fine-tuning result of the previous work. Fig.
     \centering
     \begin{subfigure}{\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_04_per_patient_fdg.png}
+        \includegraphics[width=\textwidth]{figures/ft_per_patient_fdg.png}
         \caption{Per-patient mean $FD_{gain}$ sorted within each task (over $95\%$ of patients improved in every task) and per-patient baseline vs.\ model FD (rightmost panel).}
         \label{fig:finetune_per_patient_fdg}
     \end{subfigure}
@@ -211,14 +211,14 @@ We also reproduced the per-patient fine-tuning result of the previous work. Fig.
 
     \begin{subfigure}{0.49\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_delta_kde.png}
+        \includegraphics[width=\textwidth]{figures/ft_delta_kde.png}
         \caption{Distribution of the per-patient $FD_{gain}$ improvement (fine-tuned $-$ pretrained); the overall mean shift is $+0.047$.}
         \label{fig:finetune_delta_kde}
     \end{subfigure}
     \hfill
     \begin{subfigure}{0.49\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_mse_per_dim.png}
+        \includegraphics[width=\textwidth]{figures/ft_mse_per_dim.png}
         \caption{Per-dimension MSE before and after fine-tuning (rotations scaled by $50^2$).}
         \label{fig:finetune_mse_per_dim}
     \end{subfigure}
@@ -231,21 +231,21 @@ We also reproduced the per-patient fine-tuning result of the previous work. Fig.
     \centering
     \begin{subfigure}{0.32\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_fdg_scatter.png}
+        \includegraphics[width=\textwidth]{figures/ft_fdg_scatter.png}
         \caption{$FD_{gain}$ (win rate $80\%$).}
         \label{fig:finetune_fdg_scatter}
     \end{subfigure}
     \hfill
     \begin{subfigure}{0.32\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_fd_pred_scatter.png}
+        \includegraphics[width=\textwidth]{figures/ft_fd_pred_scatter.png}
         \caption{Predicted FD (points below $y=x$ improved).}
         \label{fig:finetune_fd_pred_scatter}
     \end{subfigure}
     \hfill
     \begin{subfigure}{0.32\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{../results/finetune/ft_R+M+L_pct_improved_scatter.png}
+        \includegraphics[width=\textwidth]{figures/ft_pct_improved_scatter.png}
         \caption{Frame-level win rate.}
         \label{fig:finetune_pct_improved_scatter}
     \end{subfigure}
@@ -264,7 +264,7 @@ The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investiga
     \centering
     \begin{subfigure}{\linewidth}
         \centering
-        \includegraphics[width=\linewidth]{../results/beta_scan/01_headline_metrics.png}
+        \includegraphics[width=\linewidth]{figures/01_headline_metrics.png}
         \caption{Headline metrics vs.\ $\beta$: test NLL, mean FD vs.\ baseline, $FD_{gain}$, and MAE vs.\ predicted $\sigma$.}
         \label{fig:beta_scan_headline}
     \end{subfigure}
@@ -273,7 +273,7 @@ The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investiga
 
     \begin{subfigure}{\linewidth}
         \centering
-        \includegraphics[width=\linewidth]{../results/beta_scan/02_calibration.png}
+        \includegraphics[width=\linewidth]{figures/02_calibration.png}
         \caption{Calibration vs.\ $\beta$: empirical coverage of the $\pm1\sigma$ and $\pm2\sigma$ predictive intervals against their Gaussian targets.}
         \label{fig:beta_scan_calibration}
     \end{subfigure}
@@ -558,7 +558,7 @@ TSMixer     & 10  & 1{,}734 & 0.007 & 0.04 & 1.938 & 517  & 0.1664 & $-0.0002$ &
 
 \begin{figure*}[t]
     \centering
-    \includegraphics[width=\textwidth]{../results/benchmark/benchmark_pareto.png}
+    \includegraphics[width=\textwidth]{figures/benchmark_pareto.png}
     \caption{Pareto-optimal frontier visualizations. $FD_{gain}$ (accuracy) is plotted against the different cost axes (latency, FLOPs, size) and against noise tolerance. The conformer leads on accuracy, the mamba follows, and the GRU offers the best accuracy-per-latency trade-off.}
     \label{fig:pareto-plots}
 \end{figure*}
@@ -572,7 +572,7 @@ In particular, distillation happens on two separate spaces: the output space (me
 
 \begin{figure*}[t]
     \centering
-    \includegraphics[width=\textwidth]{../results/benchmark/benchmark_pareto_dist.png}
+    \includegraphics[width=\textwidth]{figures/benchmark_pareto_dist.png}
     \caption{Pareto-optimal frontier visualizations including the conformer-distilled GRU. The distilled GRU attains a substantially higher $FD_{gain}$ than the vanilla GRU while retaining the GRU's very low latency, moving it toward the accuracy of the heavier conformer/mamba experts.}
     \label{fig:pareto-plots-distillation}
 \end{figure*}
