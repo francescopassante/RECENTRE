@@ -307,6 +307,34 @@ $\gamma$ & Mean FD & Mean $FD_{gain}$ & \% Frames $>$ base \\
 \end{tabular}
 \end{table}
 
+\subsection{Features augmentation}
+For each frame HPC data provides the six positions of the head and the relative 1-strided differences (the velocity). However since the model is fed with 2-strided positions, also velocity has to be explicitly recomputed:
+\begin{equation}
+    v(t) = x(t) - x(t-2),
+\end{equation}
+and not v(t) = x(t) - x(t-1) as the HPC dataset provides. Same story holds for acceleration, the 2-strided acceleration is defined as:
+\begin{equation}
+    a(t) = v(t) - v(t-2) = x(t) - 2x(t-2) + x(t-4).
+\end{equation}
+The effects of these features augmentation are showed in Table~\ref{tab:feat-augmentation}: adding velocity dramatically improves performances, whereas adding also acceleration does not seem to add any information to the model.
+Nevertheless we kept both of them in the train and evaluation of all the models.
+
+\begin{table}[ht]
+\centering
+\caption{Effect of features augmentation on test-set performance.}
+\label{tab:feat-augmentation}
+\small
+\begin{tabular}{l c c c}
+\toprule
+Augmentation & $FD_{pred}$ & $FD_{gain}$ & \% Frames $>$ base \\
+\midrule
+None & 0.134 & 0.145 & 76.5 \\
+Vel & 0.129 & 0.172 & 78.5  \\
+Vel+acc & 0.129 & 0.171 & 78.1  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Data augmentation}
 
 Next, we investigated whether data augmentation could be helpful for this project. Since the translation and rotation parameters are physically related, there is little room for independent transformation of the motion parameters. We investigated two physically plausible transformations: time reversal and negation (sign flip). 
