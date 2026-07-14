@@ -39,11 +39,100 @@ loss = GaussianNLL(μ, σ², target)  −  β · mean(fd_gain)
 
 ---
 
-## Headline result: the architecture benchmark
+## The data (HCP)
+
+The raw data comes from the [Human Connectome Project](https://www.humanconnectome.org/): MRI navigator recordings sampled every **720 ms**. Each frame has 6 motion parameters — 3 translations (head position) and 3 rotations (head inclination). Dimension order is fixed throughout: `[Tx, Ty, Tz, Rx, Ry, Rz]`, with rotation indices `3:6` getting the ×50 mm scaling for FD.
+
+Three recording scenarios (tasks): **R**esting, **M**emory (recollecting memories), and **L**anguage (actively talking). After preprocessing, **1027 patients** are present in all three tasks (140 dropped); each has one time series per task, with a fixed length per task — Resting (T=1200), Memory (T=405), Language (T=316). Every length-`seq` window (stride 2) plus its next frame is one training pair, ~2M pairs in total.
+
+Prior work found no substantial difference between cross-task and cross-patient splits, so we standardize on a **single generalist model trained and tested on all three tasks (R+M+L)** over **disjoint patient splits** (seeded) to rule out leakage.
+
+**Preprocessing** (`preprocessing.py`, run once): raw HCP `txt` → drop the 6 derivative columns → convert rotations deg→rad → keep only patients present in all three tasks → save one `{patient_id: ndarray[T, 6]}` `.npy` dict per task. All later scripts read these dicts. Normalization stats (`μ`, `σ`) are computed on training frames only and travel inside each checkpoint.
+
+---
+
+## Repo layout
+
+A deliberately flat, simple codebase — no packages, no abstraction layers.
+
+| File | Role |
+|------|------|
+| `preprocessing.py` | Raw HCP `txt` → per-task `{patient_id: ndarray[T, 6]}` dicts. Drops derivative columns, converts rotations deg→rad, keeps patients present in all three tasks. |
+| `dataset.py` | `TimeSeriesDataset`, the GPU-resident `GPUBatchLoader`, `build_features` (velocity/accel + z-score), and `split_data` (leakage-safe train/val/test patient splits). |
+| `models.py` | Model classes + the `MODELS` registry + `build_model(config)`. Add an architecture = one class + one line. |
+| `metrics.py` | `fd`, `fd_gain`, and `evaluate()` — the single evaluation path used by every script. |
+| `engine.py` | `fit()` — the one training loop, shared by pretraining and fine-tuning. |
+| `train.py` / `finetune.py` | Drivers; each reads a YAML config. |
+| `evaluate.py` | Evaluate a checkpoint and write the figures to `results/`. |
+| `robustness.py` | Re-evaluate a checkpoint under added test-set noise. |
+| `routing.py` | Per-frame router (stacking) over frozen experts + baseline. |
+| `distill.py` | Conformer → GRU knowledge distillation (output KL + latent MSE). |
+| `plots.py` / `finetune_plots.py` | Figure generation (eval figures / fine-tuning CSV figures). |
+| `configs/*.yaml` | The surface you edit — one config per architecture, plus `finetune.yaml` and `distill_gru.yaml`. |
+
+All architectures share the same output contract — two heads (mean, log-variance) reading the model's latent space, and a residual prediction added to the last frame. The registry in `models.py`:
+
+- **GRU** — the original RECENTRE recurrent baseline; cheapest per-frame latency.
+- **Conformer** — attention + convolution sandwich; the most accurate model here.
+- **Mamba** — selective state-space model, content-dependent update; second best.
+- **Transformer** — encoder-only self-attention with sinusoidal positions.
+- **TCN** — dilated causal temporal convolutions.
+- **PatchTST / NLinear / DLinear** — channel-independent forecasters; weak here (channels are coupled).
+- **TSMixer** — alternating time-mixing / channel-mixing MLPs.
+
+<p align="center">
+  <img src="assets/tcn_diagram.png" width="47%">
+  <img src="assets/TSMixer.png" width="47%"><br>
+  <em>Schematic forward passes: TCN (left) and TSMixer (right).</em>
+</p>
+
+---
+
+## Reproducing the GRU baseline
+
+Before benchmarking, we reproduced the original RECENTRE GRU inside the new pipeline — a single generalist model trained and tested on all three tasks (R+M+L) over disjoint patient splits.
+
+**It tracks the motion accurately.** True vs. predicted, per dimension, on held-out patients. Every DOF reaches R² > 0.94.
+
+<p align="center"><img src="assets/gru_true_vs_predicted.png" width="90%"></p>
+
+**It beats the previous-frame baseline where it matters.** Model FD sits below the lag-1 baseline, and **74.8%** of frames are improved. FD-gain is negative for tiny motions (when the head is basically still you can't beat "don't move," and shouldn't try) and climbs once there is real motion to anticipate — exactly the regime that matters for motion correction.
+
+<p align="center"><img src="assets/gru_fd_distribution.png" width="90%"></p>
+
+**Almost every patient improves.** Per-patient FD-gain, sorted within each task: **>92%** of patients improved in every task, with a handful of near-still patients where the baseline is already optimal.
+
+<p align="center"><img src="assets/gru_per_patient_fdg.png" width="100%"></p>
+
+### The β trade-off, swept
+
+The original work fixed β = 0.1 arbitrarily. Sweeping β over orders of magnitude: NLL and calibration are best at low β, FD-gain peaks around **β ≈ 0.5–1**, and pushing β higher trades calibration away for diminishing (and eventually negative) FD returns — an overfitting effect specific to the FD-gain term. **β = 0.5** is the default sweet spot.
+
+<p align="center">
+  <img src="assets/beta_headline_metrics.png" width="100%"><br>
+  <em>Headline metrics vs. β: NLL, mean FD vs. baseline, FD-gain, and MAE vs. predicted σ.</em>
+</p>
+<p align="center">
+  <img src="assets/beta_calibration.png" width="100%"><br>
+  <em>Calibration vs. β: empirical coverage of the ±1σ / ±2σ intervals against their Gaussian targets — degrades as β grows.</em>
+</p>
+
+### Per-patient fine-tuning helps further
+
+Starting from the generalist model and fine-tuning a few epochs on each patient's own early frames (MSE + FD-gain loss, with an L2-SP penalty anchoring to the pretrained weights) lifts the improved-patient rate to **>95%** in every task, with an **80%** per-patient win rate and a mean FD-gain shift of **+0.047**.
+
+<p align="center"><img src="assets/ft_per_patient_fdg.png" width="100%"></p>
+<p align="center">
+  <img src="assets/ft_fdg_scatter.png" width="48%">
+  <img src="assets/ft_delta_kde.png" width="48%"><br>
+  <em>Left: per-patient FD-gain before vs. after fine-tuning (points above y=x improved). Right: distribution of the per-patient FD-gain improvement (mean shift +0.047).</em>
+</p>
+
+---
+
+## The architecture benchmark
 
 We trained 9 architectures at sequence lengths {10, 32, 64, 128} and ranked them by mean FD-gain on held-out patients (R+M+L, disjoint patient splits). The **Conformer wins**, the **Mamba** is second, and the **GRU** is third — but the GRU is by far the cheapest of the leaders to run.
-
-<p align="center"><img src="assets/benchmark_table.png" width="100%"></p>
 
 Top of the table (best checkpoint per architecture, sorted by FD-gain):
 
@@ -108,48 +197,6 @@ The learned per-frame router does win, but only marginally over a good fixed ave
 
 ---
 
-## Reproducing the GRU baseline
-
-Before benchmarking, we reproduced the original RECENTRE GRU inside the new pipeline — a single generalist model trained and tested on all three tasks (R+M+L) over disjoint patient splits.
-
-**It tracks the motion accurately.** True vs. predicted, per dimension, on held-out patients. Every DOF reaches R² > 0.94.
-
-<p align="center"><img src="assets/gru_true_vs_predicted.png" width="90%"></p>
-
-**It beats the previous-frame baseline where it matters.** Model FD sits below the lag-1 baseline, and **74.8%** of frames are improved. FD-gain is negative for tiny motions (when the head is basically still you can't beat "don't move," and shouldn't try) and climbs once there is real motion to anticipate — exactly the regime that matters for motion correction.
-
-<p align="center"><img src="assets/gru_fd_distribution.png" width="90%"></p>
-
-**Almost every patient improves.** Per-patient FD-gain, sorted within each task: **>92%** of patients improved in every task, with a handful of near-still patients where the baseline is already optimal.
-
-<p align="center"><img src="assets/gru_per_patient_fdg.png" width="100%"></p>
-
-### The β trade-off, swept
-
-The original work fixed β = 0.1 arbitrarily. Sweeping β over orders of magnitude: NLL and calibration are best at low β, FD-gain peaks around **β ≈ 0.5–1**, and pushing β higher trades calibration away for diminishing (and eventually negative) FD returns — an overfitting effect specific to the FD-gain term. **β = 0.5** is the default sweet spot.
-
-<p align="center">
-  <img src="assets/beta_headline_metrics.png" width="100%"><br>
-  <em>Headline metrics vs. β: NLL, mean FD vs. baseline, FD-gain, and MAE vs. predicted σ.</em>
-</p>
-<p align="center">
-  <img src="assets/beta_calibration.png" width="100%"><br>
-  <em>Calibration vs. β: empirical coverage of the ±1σ / ±2σ intervals against their Gaussian targets — degrades as β grows.</em>
-</p>
-
-### Per-patient fine-tuning helps further
-
-Starting from the generalist model and fine-tuning a few epochs on each patient's own early frames (MSE + FD-gain loss, with an L2-SP penalty anchoring to the pretrained weights) lifts the improved-patient rate to **>95%** in every task, with an **80%** per-patient win rate and a mean FD-gain shift of **+0.047**.
-
-<p align="center"><img src="assets/ft_per_patient_fdg.png" width="100%"></p>
-<p align="center">
-  <img src="assets/ft_fdg_scatter.png" width="48%">
-  <img src="assets/ft_delta_kde.png" width="48%"><br>
-  <em>Left: per-patient FD-gain before vs. after fine-tuning (points above y=x improved). Right: distribution of the per-patient FD-gain improvement (mean shift +0.047).</em>
-</p>
-
----
-
 ## Ablations
 
 ### Feature augmentation — velocity is the win
@@ -201,21 +248,21 @@ python train.py configs/gru_generalist.yaml       # or conformer_/mamba_/tcn_/..
 #    (the model is rebuilt from the config embedded in the checkpoint)
 python evaluate.py checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep150.pth
 
-# 3. Compare a folder of checkpoints, grouped by a config field (default train.beta)
-python compare.py checkpoints/beta_scan
-
-# 4. Per-patient fine-tuning sweep -> CSV, then plot it
+# 3. Per-patient fine-tuning sweep -> CSV, then plot it
 python finetune.py configs/finetune.yaml
 python finetune_plots.py
 
-# 5. Per-frame router (stacking) over the frozen best experts + baseline
+# 4. Per-frame router (stacking) over the frozen best experts + baseline
 python routing.py
 
-# 6. Distill the conformer into the GRU
+# 5. Distill the conformer into the GRU
 python distill.py configs/distill_gru.yaml
+
+# 6. Re-evaluate a checkpoint under added test-set noise
+python robustness.py checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep150.pth
 ```
 
-**Everything lives in the config.** Model type, hyperparameters, tasks, loss, `β`, epochs, input window length, augmentation, and fine-tuning knobs are all set in `configs/*.yaml` — nothing is hardcoded in the eval scripts. Each checkpoint embeds its full config, so `evaluate.py` / `compare.py` / `finetune.py` rebuild the exact model with no hyperparameters repeated anywhere.
+**Everything lives in the config.** Model type, hyperparameters, tasks, loss, `β`, epochs, input window length, augmentation, and fine-tuning knobs are all set in `configs/*.yaml` — nothing is hardcoded in the eval scripts. Each checkpoint embeds its full config, so `evaluate.py` / `finetune.py` rebuild the exact model with no hyperparameters repeated anywhere.
 
 A minimal config:
 
@@ -237,48 +284,6 @@ train:
   beta: 0.5
   epochs: 150
 ```
-
----
-
-## Repo layout
-
-A deliberately flat, simple codebase — no packages, no abstraction layers.
-
-| File | Role |
-|------|------|
-| `preprocessing.py` | Raw HCP `txt` → per-task `{patient_id: ndarray[T, 6]}` dicts. Drops derivative columns, converts rotations deg→rad, keeps patients present in all three tasks. |
-| `dataset.py` | `TimeSeriesDataset`, the GPU-resident `GPUBatchLoader`, `build_features` (velocity/accel + z-score), and `split_data` (leakage-safe train/val/test patient splits). |
-| `models.py` | Model classes + the `MODELS` registry + `build_model(config)`. Add an architecture = one class + one line. |
-| `metrics.py` | `fd`, `fd_gain`, and `evaluate()` — the single evaluation path used by every script. |
-| `engine.py` | `fit()` — the one training loop, shared by pretraining and fine-tuning. |
-| `train.py` / `finetune.py` / `resume.py` | Drivers; each reads a YAML config. |
-| `sweep.py` / `compare.py` / `robustness.py` | Shared eval engine + checkpoint comparison + added-noise robustness. |
-| `routing.py` | Per-frame router (stacking) over frozen experts + baseline. |
-| `distill.py` | Conformer → GRU knowledge distillation (output KL + latent MSE). |
-| `plots.py` / `finetune_plots.py` / `evaluate.py` | Figure generation. |
-| `configs/*.yaml` | The surface you edit. |
-
-### Architectures
-
-`models.py` holds a registry of 9 forecasters, all sharing the same output contract — two heads (mean, log-variance) reading the model's latent space, and a residual prediction added to the last frame:
-
-- **GRU** — the original RECENTRE recurrent baseline; cheapest per-frame latency.
-- **Conformer** — attention + convolution sandwich; the most accurate model here.
-- **Mamba** — selective state-space model, content-dependent update; second best.
-- **Transformer** — encoder-only self-attention with sinusoidal positions.
-- **TCN** — dilated causal temporal convolutions.
-- **PatchTST / NLinear / DLinear** — channel-independent forecasters; weak here (channels are coupled).
-- **TSMixer** — alternating time-mixing / channel-mixing MLPs.
-
-<p align="center">
-  <img src="assets/tcn_diagram.png" width="47%">
-  <img src="assets/TSMixer.png" width="47%"><br>
-  <em>Schematic forward passes: TCN (left) and TSMixer (right).</em>
-</p>
-
-### Data
-
-HCP, three tasks with fixed lengths per task — Resting (T=1200), Memory (T=405), Language (T=316), 1027 patients present in all three. Dimension order is fixed throughout: `[Tx, Ty, Tz, Rx, Ry, Rz]`, with rotation indices `3:6` getting the ×50 mm scaling for FD. Normalization stats (`μ`, `σ`) are computed on training frames only and travel inside each checkpoint.
 
 ---
 
