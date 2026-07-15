@@ -260,7 +260,7 @@ We also reproduced the per-patient fine-tuning result of the previous work. Fig.
 \subsection{$\beta$ scan}
 The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investigated the performances of the original GRU model as $\beta$ is swept over many orders of magnitude. In particular, we focused on the most relevant metrics that could sharply depend on the relative importance between the negative log likelihood and the $FD_{gain}$ term. Since the negative log likelihood term is the only one explicitly constraining the uncertainty of the prediction,we expect that as $\beta$ grows, the uncertainty calibration will get worse. On the other hand, $FD_{gain}$ and the percentage of improved frames (relative to baseline) should rise with $\beta$. Our empirical results are summarized in Fig.~(\ref{fig:beta_scan}).
 
-\begin{figure}[t]
+\begin{figure*}[t]
     \centering
     \begin{subfigure}{\linewidth}
         \centering
@@ -280,7 +280,7 @@ The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investiga
 
     \caption{$\beta$ scan of the GRU model. As $\beta$ grows, $FD_{gain}$ peaks around $\beta=1$ before the loss over-weights the FD term and uncertainty calibration degrades.}
     \label{fig:beta_scan}
-\end{figure}
+\end{figure*}
 
 As expected, uncertainty calibration degrades as $\beta$ grows near and past $\beta = 1$, while $FD_{gain}$ rises and then decreases again when $FD_{gain}$ is over-weighted in the loss. This is probably an overfitting phenomenon specific to the $FD_{gain}$ term: even though the loss function at very high $\beta$ is essentially a maximization of $FD_{gain}$, this doesn't generalize well to the validation/test set. 
 Across different scans, the three values $\beta = 0.1, 0.5, 1$ showed the best performances. We chose to use $\beta = 0.5$ as a middle ground between the optimally calibrated but lower $FD_{gain}$ focused $\beta = 0.1$ and the less calibrated but higher $FD_{gain}$ focused $\beta = 1$.
@@ -383,13 +383,8 @@ We see from the results that we gain at most 0.002 ($\sim 1\%$) from the base mo
 
 \subsection{TCN}
 
-The first new model we implemented is a temporal convolutional network (TCN). This network uses temporal convolution kernels at various level of dilations to create causal masks (i.e. the kernel is 0 for frames that are in the future with respect to the output frame). The last frame is then taken and linearly projected by two separate heads to produce (mean, var). Like all the architectures we implemented, the model predicts a residual with respect to the last position. A schematic diagram of the network forward is found in Fig.~(\ref{fig:tcn_diagram}).
+The first new model we implemented is a temporal convolutional network (TCN). This network uses temporal convolution kernels at various level of dilations to create causal masks (i.e. the kernel is 0 for frames that are in the future with respect to the output frame). The last frame is then taken and linearly projected by two separate heads to produce (mean, var). Like all the architectures we implemented, the model predicts a residual with respect to the last position.
 
-\begin{figure}
-    \includegraphics[width=0.8 \linewidth]{figures/tcn_diagram.png}
-    \caption{Schematic diagram of the TCN model}
-    \label{fig:tcn_diagram}
-\end{figure}
 
 
 
@@ -425,14 +420,8 @@ The other model proposed in the Zeng paper is the DLinear model. It is among the
 \subsection{TSMixer}
 
 Our analysis (see later) showed that channel-independent models such as PatchTST, Nlinear and Dlinear don't have good performances on our task. A slighty more complicated architecture, inspired by the Zeng paper, was proposed by the Google Cloud AI team in 2023: TSMixer.
-The Time-Series Mixer~\cite{chen2023tsmixerallmlparchitecturetime} is composed mainly of MLP layers but with the advantage of alternating time-mixing layers with channel-mixing layers. A schematic picture of the TSMixer architecture is shown in Fig. (\ref{fig:TSMixer}). A number of TSMixer layers are applied in sequence, each of them composed of a multi-layer perceptron among the frames and another among the features. This model should allow for richer channel-mixing operations that our task seems to require. 
+The Time-Series Mixer~\cite{chen2023tsmixerallmlparchitecturetime} is composed mainly of MLP layers but with the advantage of alternating time-mixing layers with channel-mixing layers. A number of TSMixer layers are applied in sequence, each of them composed of a multi-layer perceptron among the frames and another among the features. This model should allow for richer channel-mixing operations that our task seems to require. 
 
-\begin{figure}[h]
-\centering
-\includegraphics[width=0.7\linewidth]{figures/TSMixer.png}
-\caption{Schematic diagram of the TSMixer model}
-\label{fig:TSMixer}
-\end{figure}
 
 
 
@@ -465,12 +454,12 @@ As we can see, the conformer model achieves the best test accuracy out of all th
 
 To analyze the dependence of model performance on the input sequence length (this is a major factor in actual real time deployment) we perform a scan of the best three models (Conformer, Mamba, GRU) over the sequence lengths $T = \{10, 32, 64, 128\}$ and plot the results in Fig. (\ref{fig:seqlen-scan})
 
-\begin{figure}[h]
+\begin{figure*}[h]
 \centering
 \includegraphics[width=\linewidth]{figures/fdg_vs_seqlen.png}
 \caption{$FD_{gain}$ as a function of sequence length for the best three models.}
 \label{fig:seqlen-scan}
-\end{figure}
+\end{figure*}
 
 We can see that the accuracy metrics grow with sequence length. Past $T = 64$ we enter in diminishing-returns territory, and the mean FD actually slightly deteriorates when going from $T=64$ to $T = 128$.
 
@@ -579,7 +568,140 @@ In particular, distillation happens on two separate spaces: the output space (me
 
 \section{Discussion}
 
+\subsection{Full conformer analysis}
+
+We have shown that the conformer is the best architecture of the benchmark (Table~\ref{tab:benchmark}). Now we take a closer look at its behavior, by running the full \texttt{evaluate.py} analysis on the best conformer run (sequence length 128). All the figures in this section refer to the single best checkpoint: the generalist conformer trained and tested on all three tasks (R+M+L) over disjoint patient splits, at sequence length $T = 128$ and $\beta = 0.5$\footnote{Actually we show the analysis for a slightly worse conformer run, where $d_{model}$ was put to $64$ rather than the usual $128$. This is because the best checkpoint is stored inside an unrechable server at the time of writing (should be back online soon). The performances are just slightly worse than the best model, whose metrics are correctly reported in the full benchmark table}. On the held-out test patients it reaches a mean $FD_{gain} = 0.2159$, lowering the mean framewise displacement from the baseline's $0.165$ mm to $0.121$ mm, with $80.2\%$ of all frames improved over the lag-1 baseline.
+
+The per-dimension agreement is excellent: every degree of freedom reaches $R^2 > 0.96$, with five of the six dimensions above $0.99$ (Fig.~\ref{fig:conf_true_vs_pred}). The worst dimension is the translation $T_x$ ($R^2 = 0.968$), which is also the noisiest feature dimension in the raw data. Fig.~\ref{fig:conf_error_per_dim} gives the same picture, by showing the mean MAE and RMSE for the baseline and for the model, per task and per dimension. We see that the conformer strictly improves on the baseline in each individual motion parameter.
+
+\begin{figure*}[t]
+    \centering
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=0.86\textwidth]{figures/conf_02_true_vs_predicted.png}
+        \caption{True vs.\ predicted value per dimension, with per-dimension $R^2$. All dimensions exceed $R^2 = 0.96$ and five of six exceed $0.99$.}
+        \label{fig:conf_true_vs_pred}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=0.86\textwidth]{figures/conf_01_error_per_dimension.png}
+        \caption{Per-dimension MAE (left) and RMSE (right), model vs.\ baseline. All the points sit below the $y=x$ line.}
+        \label{fig:conf_error_per_dim}
+    \end{subfigure}
+
+    \caption{Accuracy of the best conformer ($T=128$, R+M+L) on the held-out test patients, per motion dimension.}
+    \label{fig:conf_accuracy}
+\end{figure*}
+
+
+Fig.~\ref{fig:conf_fd_distribution} compares the model and the baseline framewise-displacement distributions: the model distribution is clearly shifted towards smaller FD and its right tail (large error frames) sits much lower than the baseline's. The per-sample $FD_{gain}$ distribution is centered above zero for all three tasks, with $79.8\%$ of frames improved. The $FD_{gain}$ is distributed across the population rather than driven by a few patients: $98.7\%$ (R), $97.4\%$ (M) and $94.8\%$ (L) of patients have a positive mean $FD_{gain}$ (Fig.~\ref{fig:conf_per_patient}), and the per-patient scatter shows that almost all patients lie below the $y=x$ line, including the highest-motion ones.
+
+\begin{figure*}[t]
+    \centering
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=0.92\textwidth]{figures/conf_03_fd_distribution.png}
+        \caption{Framewise-displacement distribution of the model (per task) vs.\ the lag-1 baseline (left) and the per-sample $FD_{gain}$ distribution (right): $79.8\%$ of frames improved.}
+        \label{fig:conf_fd_distribution}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/conf_04_per_patient_fdg.png}
+        \vspace{-0.5em}
+        \caption{Per-patient mean $FD_{gain}$ sorted within each task ($94.8$--$98.7\%$ of patients improved) and per-patient baseline vs.\ model FD (right).}
+        \label{fig:conf_per_patient}
+    \end{subfigure}
+
+    \caption{Framewise-displacement analysis of the conformer. Gains are large in the mean and spread across the whole population.}
+    \label{fig:conf_fd}
+\end{figure*}
+
+An interesting study shows the relation between a specific frame's $FD_{gain}$ and its baseline $FD$. This shows for which kinds of frames our model performs best: baseline $FD$ is indeed a measure of the displacement of the current frame with respect to the previous position, so we take the distribution of frame displacements, compute its percentiles, and scatter the mean $FD_{gain}$ versus the frame baseline $FD$ (Fig.~\ref{fig:conf_fdg_vs_motion}). For almost static frames (small baseline FD) the $FD_{gain}$ is negative: when the head stays still, the lag-1 baseline is unbeatable. As motion grows the gain rises steeply, peaking around $FD_{gain} \approx 0.4$ at a baseline FD of $0.2$--$0.25$ mm, and then slowly declines for the very large motions, which tend to be unpredictable movements. This is exactly the desirable behavior: the model focuses its improvement on the high-motion frames, which are the ones that corrupt the MRS acquisition.
+
+\begin{figure*}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/conf_08_fdgain_vs_motion.png}
+    \caption{Model FD (left) and $FD_{gain}$ (right) as a function of motion magnitude (baseline FD). The gain is negative for near-static frames, peaks near $0.2$--$0.25$ mm of motion, and remains positive throughout the physiologically relevant range.}
+    \label{fig:conf_fdg_vs_motion}
+\end{figure*}
+
+
+
+Fig.~\ref{fig:conf_calibration} shows the standardized residuals $z = (y - \mu_{\text{pred}})/\sigma_{\text{pred}}$ per dimension to check the correct calibration of the predicted uncertainties: they closely follow a standard normal, with mean $\approx 0$, standard deviation between $1.00$ and $1.06$, and reduced $\chi^2$ between $1.01$ and $1.13$ across all six dimensions. Empirical coverage of the $\pm 1\sigma$ and $\pm 2\sigma$ intervals ($\sim 72$--$75\%$ and $\sim 94$--$95\%$) is close to the Gaussian targets, so the predicted $\sigma$ is a well calibated uncertainty estimate. Fig.~\ref{fig:conf_fd_vs_sigma} confirms that the predicted $\sigma$ correlates with the framewise displacement. Most importantly the model FD stays below the baseline FD in every $\sigma$ bin, even in the highest-uncertainty frames beyond the $p90$/$p95$ percentiles. This means that the idea of reverting to the baseline when the model outputs a $\sigma$ which is large enough (e.g. $99th$ percentile of the $\sigma$ distribution encountered in the validation set) is not a good one. This is precisely the reason we decided to run this visualization, since our experiments with implementing a "revert to baseline when $\sigma$ too large" policy were failing.x 
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/conf_06_sigma_calibration.png}
+    \caption{Predicted-$\sigma$ calibration of the conformer. Standardized residuals $z = (y - \mu_{\text{pred}})/\sigma_{\text{pred}}$ per dimension against $\mathcal{N}(0,1)$: mean $\approx 0$, std $\in [1.00, 1.06]$, reduced $\chi^2 \in [1.01, 1.13]$, and $\pm 1\sigma$/$\pm 2\sigma$ coverage close to the Gaussian targets.}
+    \label{fig:conf_calibration}
+\end{figure*}
+
+\begin{figure*}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/conf_10_fd_vs_sigma.png}
+    \caption{Model FD vs.\ predicted $\sigma$: the joint density (left) and the mean FD per $\sigma$ bin for model and baseline (right). Predicted uncertainty tracks the actual error, and the model FD stays below the baseline in every $\sigma$ bin.}
+    \label{fig:conf_fd_vs_sigma}
+\end{figure*}
+
+
+Fig.~\ref{fig:conf_patient_timeseries} shows a single held-out resting-state patient across all six dimensions. Finally, Fig.~\ref{fig:conf_profile} reports the compute profile of this model: $199{,}436$ parameters ($0.8$ MB in float32), $40.4$M FLOPs per window, and a single-frame latency of $1.4$ ms (ran on mps, actual CUDA numbers are reported in the benchmark table). Even though the conformer is one of the heavier architectures in our benchmark, its single-frame latency is still almost two orders of magnitude below the $100$ ms budget imposed by the $720$ ms sampling interval.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/conf_07_patient_timeseries.png}
+    \caption{Predicted vs.\ true head-motion parameters for one held-out resting-state patient across the six degrees of freedom, with the $\pm 1\sigma$ predictive band.}
+    \label{fig:conf_patient_timeseries}
+\end{figure*}
+
+\begin{figure*}[h]
+    \centering
+    \includegraphics[width=0.92\linewidth]{figures/conf_09_model_profile.png}
+    \caption{Compute profile of the best conformer: parameter count, model size, FLOPs per forward window, single-frame and batched latency, and throughput. Single-frame latency ($1.4$ ms) is far below the $100$ ms real-time budget.}
+    \label{fig:conf_profile}
+\end{figure*}
+
 \section{Conclusions}
+
+We conclude the paper with a brief recap of our own contributions to the RECENTRE project, current limitations and possible future work.
+
+\subsection{Recap of our results}
+
+In increasing order of relevance, we:
+\begin{itemize}
+    \item[o] Reproduced and improved the original paper's and thesis' results.
+    \item[o] Ran a $\beta$ scan to find its optimal value.
+    \item[o] Organized the code in a config-oriented design that massively simplifies multiple trainings, finetunings, et cetera across all architectures.
+    \item[o] Optimized 9 different architectures with 4 sequence lengths each, and found the Conformer to be the top scorer.
+    \item[o] Developed a single benchmark to compare models across many accuracy, compute cost and noise robustness metrics, along with Pareto-optimal frontiers.
+    \item Developed an ensembling strategy and found that active frame-by-frame routing among the best models pushes accuracy past the single best model.
+    \item Implemented data augmentation and found significant performance improvement thanks to sign flip augmentation.
+    \item Found that supplying velocity and acceleration parameters leads to significantly better performance in almost all architectures.
+    \item Determined sequence length to be a dominant factor, and found diminishing returns past $T=64$.
+    \item Distilled the top performing model (Conformer) over one of the fastest (GRU), pushing performance higher while keeping latency at minimum.
+\end{itemize}
+
+
+
+\subsection{Limitations and future work}
+
+There are still a few limitations, along with possible future work to fix them and expand further:
+\begin{itemize}
+    \item Physics-inspired jerk penalty experiment was inconclusive: more runs across many architectures could associate a statistical error to the jerk penalty term and confirm or discard an accuracy edge
+    \item Distillation was ran only once and only for the (Conformer, GRU) pair. Tuning of distillation parameters and other pairs could be explored.
+    \item The mamba model is much slower than it could've been. Careful hardware-aware optimization could make it competitive with other models latency-wise
+    \item The ensemble strategy found an edge over the single best model, but a fixed optimal combination could beat or match active frame-by-frame routing without the (very small) router model overhead
+    \item Worst case scenario analysis, patient-by-patient in depth analysis
+\end{itemize}
+
+
+
+
 
 \bibliographystyle{apsrev4-2}
 \bibliography{references}
