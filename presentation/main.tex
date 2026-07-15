@@ -54,7 +54,7 @@ We build on their findings (no substantial difference in performance among the d
     \item Standardizing all results to the same scenario: train on all tasks (R+M+L) and test on all tasks (R+M+L), while keeping disjoint sets of patients to avoid any possible leakage
 \end{enumerate}
 
-The thesis' showed that all cross-task combinations or cross-patients combinations had essentially identical performances. This suggested to us that training a single model with all three tasks would probably yield better performances (more data, covering the whole training distribution) and facilitate inference, as we have a single model regardless of the testing task. Our analysis indeed showed that this was the case.
+The thesis showed that all cross-task combinations or cross-patients combinations had essentially identical performances. This suggested to us that training a single model with all three tasks would probably yield better performances (more data, covering the whole training distribution) and facilitate inference, as we have a single model regardless of the testing task. Our analysis indeed showed that this was the case.
 
 \begin{figure}[h]
     \centering
@@ -90,7 +90,7 @@ All the tested models follow the same protocol:
     \item Optional fine-tuning
 \end{enumerate}
 
-After model definition, typically as a torch module, a training config is necessary to run the training loop. The model hyperparameters, training and testing tasks, split percentages, data augmentation, loss function, training epochs, learning rate and so on are all specified in the training config, so that all the relevant parameters are easy to read, especially for systmeatic comparisons between many different models and runs.
+After model definition, typically as a torch module, a training config is necessary to run the training loop. The model hyperparameters, training and testing tasks, split percentages, data augmentation, loss function, training epochs, learning rate and so on are all specified in the training config, so that all the relevant parameters are easy to read, especially for systematic comparisons between many different models and runs.
 
 After the training is done, the model weights, the optimizer and scheduler states, the training config, the training and testing tasks and patient ids are stored in a checkpoint to be used for testing, finetuning or resuming training. 
 
@@ -258,7 +258,7 @@ We also reproduced the per-patient fine-tuning result of the previous work. Fig.
 \section{Results}
 
 \subsection{$\beta$ scan}
-The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investigated the performances of the original GRU model as $\beta$ is swept over many orders of magnitude. In particular, we focused on the most relevant metrics that could sharply depend on the relative importance between the negative log likelihood and the $FD_{gain}$ term. Since the negative log likelihood term is the only one explicitly constraining the uncertainty of the prediction,we expect that as $\beta$ grows, the uncertainty calibration will get worse. On the other hand, $FD_{gain}$ and the percentage of improved frames (relative to baseline) should rise with $\beta$. Our empirical results are summarized in Fig.~(\ref{fig:beta_scan}).
+The previous work used a fixed (arbitrary) choice of $\beta = 0.1$. We investigated the performances of the original GRU model as $\beta$ is swept over many orders of magnitude. In particular, we focused on the most relevant metrics that could sharply depend on the relative importance between the negative log likelihood and the $FD_{gain}$ term. Since the negative log likelihood term is the only one explicitly constraining the uncertainty of the prediction, we expect that as $\beta$ grows, the uncertainty calibration will get worse. On the other hand, $FD_{gain}$ and the percentage of improved frames (relative to baseline) should rise with $\beta$. Our empirical results are summarized in Fig.~(\ref{fig:beta_scan}).
 
 \begin{figure*}[t]
     \centering
@@ -308,11 +308,11 @@ $\gamma$ & Mean FD & Mean $FD_{gain}$ & \% Frames $>$ base \\
 \end{table}
 
 \subsection{Features augmentation}
-For each frame HPC data provides the six positions of the head and the relative 1-strided differences (the velocity). However since the model is fed with 2-strided positions, also velocity has to be explicitly recomputed:
+For each frame HCP data provides the six positions of the head and the relative 1-strided differences (the velocity). However since the model is fed with 2-strided positions, also velocity has to be explicitly recomputed:
 \begin{equation}
     v(t) = x(t) - x(t-2),
 \end{equation}
-and not $v(t) = x(t) - x(t-1)$ as the HPC dataset provides. Same story holds for acceleration, the 2-strided acceleration is defined as:
+and not $v(t) = x(t) - x(t-1)$ as the HCP dataset provides. Same story holds for acceleration, the 2-strided acceleration is defined as:
 \begin{equation}
     a(t) = v(t) - v(t-2) = x(t) - 2x(t-2) + x(t-4).
 \end{equation}
@@ -370,7 +370,7 @@ We added the term
     L_{jerk} = \gamma J(t)
 \end{equation}
 
-to the loss function, where the jerk $J(t)$ is computed via finite diffirences as:
+to the loss function, where the jerk $J(t)$ is computed via finite differences as:
 
 \begin{equation}
     J(t) = a(t) - a(t-2) = x(t) - 3x(t-2) + 3x(t-4) - x(t-6)
@@ -409,7 +409,7 @@ The patches are summed with learnable positional embeddings and then treated as 
 
 \subsection{NLinear}
 
-A 2022 paper by Zeng et al~\cite{zeng2022transformers} showed that "embarassingly simple" linear models could beat transformer-based models by a big margin in many time series forecasting tasks. We implemented the NLinear model proposed in that paper. It is a very light model, with $\mathcal{O}$(T) parameters. The architecture philosophy is to center the whole window with respect to the last frame and apply a simple channel-independent linear map between the whole sequence and the predicted frame. In our case, there are $6$ linear layers for the mean head and 6 linear layers for the variance head.
+A 2022 paper by Zeng et al~\cite{zeng2022transformers} showed that "embarrassingly simple" linear models could beat transformer-based models by a big margin in many time series forecasting tasks. We implemented the NLinear model proposed in that paper. It is a very light model, with $\mathcal{O}$(T) parameters. The architecture philosophy is to center the whole window with respect to the last frame and apply a simple channel-independent linear map between the whole sequence and the predicted frame. In our case, there are $6$ linear layers for the mean head and 6 linear layers for the variance head.
 
 
 \subsection{DLinear}
@@ -435,14 +435,14 @@ The self attention module is the classical self-attention of other transformer a
 The whole idea of the conformer is to use attention to learn long range interactions and convolution to learn short range, seasonal changes.
 
 \subsection{Mamba}
-State space models recently recieved a lot of interest, mainly due to their representation learning ability. SSMs have a clear physics-inspired architecture, where a hidden state is progressively updated based on the input sequence. Like RNNs, however, they historically suffer from the lack of ability to have content-aware reasoning, since the update parameters are not content-dependent, but fixed after training. Recent SSMs like Mamba address this exact problem by allowing a data-dependent selection mechanism, taking the best advantage of transformers (content-dependent reasoning) with the best advantage of RNNs (linear scaling with sequence length). We therefore tried to implement a Mamba architecture for our multivariate time series forecasting task. 
-Very schematically, a Mamba model updates its hidden state via three content-dependent quantities $\Delta, B, C$ and a content-indpendent quantity $A$. In particular, the fundamental update equation is:
+State space models recently received a lot of interest, mainly due to their representation learning ability. SSMs have a clear physics-inspired architecture, where a hidden state is progressively updated based on the input sequence. Like RNNs, however, they historically suffer from the lack of ability to have content-aware reasoning, since the update parameters are not content-dependent, but fixed after training. Recent SSMs like Mamba address this exact problem by allowing a data-dependent selection mechanism, taking the best advantage of transformers (content-dependent reasoning) with the best advantage of RNNs (linear scaling with sequence length). We therefore tried to implement a Mamba architecture for our multivariate time series forecasting task. 
+Very schematically, a Mamba model updates its hidden state via three content-dependent quantities $\Delta, B, C$ and a content-independent quantity $A$. In particular, the fundamental update equation is:
 
 \begin{equation}
     h_{t+1} = e^{\Delta(x_t) A} h_t + \Delta(x_t)B(x_t) f(x_t)
 \end{equation}
 
-Since $A$ is a negative matrix, large $\Delta(x_t)$ means the previous hidden state is forgotten, and the current input contributes a lot to the hidden state, while small $\Delta(x_t)$ means the previous hidden state is retained, and the current input doesn't contribute much to it. This content dependance of $\Delta$ on $x(t)$ makes the mamba content-dependent and thus achieves optimal results in many tasks where transformers are very good at, while having a linear scaling vs. the quadratic scaling of standard attention. Our Mamba implementation is indeed the second best model of our benchmark, despite our implementation not being fully optimized.
+Since $A$ is a negative matrix, large $\Delta(x_t)$ means the previous hidden state is forgotten, and the current input contributes a lot to the hidden state, while small $\Delta(x_t)$ means the previous hidden state is retained, and the current input doesn't contribute much to it. This content dependence of $\Delta$ on $x(t)$ makes the mamba content-dependent and thus achieves optimal results in many tasks where transformers are very good at, while having a linear scaling vs. the quadratic scaling of standard attention. Our Mamba implementation is indeed the second best model of our benchmark, despite our implementation not being fully optimized.
 
 
 \subsection{Model comparisons}
@@ -557,7 +557,7 @@ TSMixer     & 10  & 1{,}734 & 0.007 & 0.04 & 1.938 & 517  & 0.1664 & $-0.0002$ &
 
 From the pareto-optimal frontier it is clear that the best performing model is the conformer, followed by the mamba and then by the GRU. Given the large difference in latency between the GRU and the conformer, it'd be ideal to push the GRU to have higher accuracy while still keeping its remarkably low latency. To achieve such goal, we tried knowledge distillation from the conformer onto the GRU. 
 
-In particular, distillation happens on two separate spaces: the output space (mean, var) and the latent space, just before the fully connected heads. Both models indeed send the output of their architecture-specific latent space onto a fc mean head and a fc var head. We therefore use the latent space before the fc heads to distill the conformer onto the GRU. Since these latent spaces have different dimensions, we first linearly project the student latent space to the teacher's, and then simply use MSE loss to bring the latent feature closer to each other. For the output space, we use the KL divergence between the normal distributions (mean, var) outputted by the two models. The results are shown in Fig. \ref{fig:pareto-plots-distillation}. As we can see, we succedeed in achieving significantly higher $FD_{gain}$ while retaining the very low latency of the GRU model. In future work, this distillation process could be optimized over the various hyperparameters weighing the latent space or output space contributions and the temperature of the teachers' soft labels.
+In particular, distillation happens on two separate spaces: the output space (mean, var) and the latent space, just before the fully connected heads. Both models indeed send the output of their architecture-specific latent space onto a fc mean head and a fc var head. We therefore use the latent space before the fc heads to distill the conformer onto the GRU. Since these latent spaces have different dimensions, we first linearly project the student latent space to the teacher's, and then simply use MSE loss to bring the latent feature closer to each other. For the output space, we use the KL divergence between the normal distributions (mean, var) outputted by the two models. The results are shown in Fig. \ref{fig:pareto-plots-distillation}. As we can see, we succeeded in achieving significantly higher $FD_{gain}$ while retaining the very low latency of the GRU model. In future work, this distillation process could be optimized over the various hyperparameters weighing the latent space or output space contributions and the temperature of the teachers' soft labels.
 
 \begin{figure*}[t]
     \centering
@@ -570,7 +570,7 @@ In particular, distillation happens on two separate spaces: the output space (me
 
 \subsection{Full conformer analysis}
 
-We have shown that the conformer is the best architecture of the benchmark (Table~\ref{tab:benchmark}). Now we take a closer look at its behavior, by running the full \texttt{evaluate.py} analysis on the best conformer run (sequence length 128). All the figures in this section refer to the single best checkpoint: the generalist conformer trained and tested on all three tasks (R+M+L) over disjoint patient splits, at sequence length $T = 128$ and $\beta = 0.5$\footnote{Actually we show the analysis for a slightly worse conformer run, where $d_{model}$ was put to $64$ rather than the usual $128$. This is because the best checkpoint is stored inside an unrechable server at the time of writing (should be back online soon). The performances are just slightly worse than the best model, whose metrics are correctly reported in the full benchmark table}. On the held-out test patients it reaches a mean $FD_{gain} = 0.2159$, lowering the mean framewise displacement from the baseline's $0.165$ mm to $0.121$ mm, with $80.2\%$ of all frames improved over the lag-1 baseline.
+We have shown that the conformer is the best architecture of the benchmark (Table~\ref{tab:benchmark}). Now we take a closer look at its behavior, by running the full \texttt{evaluate.py} analysis on the best conformer run (sequence length 128). All the figures in this section refer to the single best checkpoint: the generalist conformer trained and tested on all three tasks (R+M+L) over disjoint patient splits, at sequence length $T = 128$ and $\beta = 0.5$\footnote{Actually we show the analysis for a slightly worse conformer run, where $d_{model}$ was put to $64$ rather than the usual $128$. This is because the best checkpoint is stored inside an unreachable server at the time of writing (should be back online soon). The performances are just slightly worse than the best model, whose metrics are correctly reported in the full benchmark table}. On the held-out test patients it reaches a mean $FD_{gain} = 0.2159$, lowering the mean framewise displacement from the baseline's $0.165$ mm to $0.121$ mm, with $80.2\%$ of all frames improved over the lag-1 baseline.
 
 The per-dimension agreement is excellent: every degree of freedom reaches $R^2 > 0.96$, with five of the six dimensions above $0.99$ (Fig.~\ref{fig:conf_true_vs_pred}). The worst dimension is the translation $T_x$ ($R^2 = 0.968$), which is also the noisiest feature dimension in the raw data. Fig.~\ref{fig:conf_error_per_dim} gives the same picture, by showing the mean MAE and RMSE for the baseline and for the model, per task and per dimension. We see that the conformer strictly improves on the baseline in each individual motion parameter.
 
@@ -622,7 +622,7 @@ Fig.~\ref{fig:conf_fd_distribution} compares the model and the baseline framewis
     \label{fig:conf_fd}
 \end{figure*}
 
-An interesting study shows the relation between a specific frame's $FD_{gain}$ and its baseline $FD$. This shows for which kinds of frames our model performs best: baseline $FD$ is indeed a measure of the displacement of the current frame with respect to the previous position, so we take the distribution of frame displacements, compute its percentiles, and scatter the mean $FD_{gain}$ versus the frame baseline $FD$ (Fig.~\ref{fig:conf_fdg_vs_motion}). For almost static frames (small baseline FD) the $FD_{gain}$ is negative: when the head stays still, the lag-1 baseline is unbeatable. As motion grows the gain rises steeply, peaking around $FD_{gain} \approx 0.4$ at a baseline FD of $0.2$--$0.25$ mm, and then slowly declines for the very large motions, which tend to be unpredictable movements. This is exactly the desirable behavior: the model focuses its improvement on the high-motion frames, which are the ones that corrupt the MRS acquisition.
+An interesting study shows the relation between a specific frame's $FD_{gain}$ and its baseline $FD$. This shows for which kinds of frames our model performs best: baseline $FD$ is indeed a measure of the displacement of the current frame with respect to the previous position, so we take the distribution of frame displacements, compute its percentiles, and scatter the mean $FD_{gain}$ versus the frame baseline $FD$ (Fig.~\ref{fig:conf_fdg_vs_motion}). For almost static frames (small baseline FD) the $FD_{gain}$ is negative: when the head stays still, the lag-1 baseline is unbeatable. As motion grows the gain rises steeply, peaking around $FD_{gain} \approx 0.4$ at a baseline FD of $0.2$--$0.25$ mm, and then slowly declines for the very large motions, which tend to be unpredictable movements. This is exactly the desirable behavior: the model focuses its improvement on the high-motion frames, which are the ones that corrupt the MRI acquisition.
 
 \begin{figure*}[h]
     \centering
@@ -633,7 +633,7 @@ An interesting study shows the relation between a specific frame's $FD_{gain}$ a
 
 
 
-Fig.~\ref{fig:conf_calibration} shows the standardized residuals $z = (y - \mu_{\text{pred}})/\sigma_{\text{pred}}$ per dimension to check the correct calibration of the predicted uncertainties: they closely follow a standard normal, with mean $\approx 0$, standard deviation between $1.00$ and $1.06$, and reduced $\chi^2$ between $1.01$ and $1.13$ across all six dimensions. Empirical coverage of the $\pm 1\sigma$ and $\pm 2\sigma$ intervals ($\sim 72$--$75\%$ and $\sim 94$--$95\%$) is close to the Gaussian targets, so the predicted $\sigma$ is a well calibated uncertainty estimate. Fig.~\ref{fig:conf_fd_vs_sigma} confirms that the predicted $\sigma$ correlates with the framewise displacement. Most importantly the model FD stays below the baseline FD in every $\sigma$ bin, even in the highest-uncertainty frames beyond the $p90$/$p95$ percentiles. This means that the idea of reverting to the baseline when the model outputs a $\sigma$ which is large enough (e.g. $99th$ percentile of the $\sigma$ distribution encountered in the validation set) is not a good one. This is precisely the reason we decided to run this visualization, since our experiments with implementing a "revert to baseline when $\sigma$ too large" policy were failing.x 
+Fig.~\ref{fig:conf_calibration} shows the standardized residuals $z = (y - \mu_{\text{pred}})/\sigma_{\text{pred}}$ per dimension to check the correct calibration of the predicted uncertainties: they closely follow a standard normal, with mean $\approx 0$, standard deviation between $1.00$ and $1.06$, and reduced $\chi^2$ between $1.01$ and $1.13$ across all six dimensions. Empirical coverage of the $\pm 1\sigma$ and $\pm 2\sigma$ intervals ($\sim 72$--$75\%$ and $\sim 94$--$95\%$) is close to the Gaussian targets, so the predicted $\sigma$ is a well calibrated uncertainty estimate. Fig.~\ref{fig:conf_fd_vs_sigma} confirms that the predicted $\sigma$ correlates with the framewise displacement. Most importantly the model FD stays below the baseline FD in every $\sigma$ bin, even in the highest-uncertainty frames beyond the $p90$/$p95$ percentiles. This means that the idea of reverting to the baseline when the model outputs a $\sigma$ which is large enough (e.g. $99th$ percentile of the $\sigma$ distribution encountered in the validation set) is not a good one. This is precisely the reason we decided to run this visualization, since our experiments with implementing a "revert to baseline when $\sigma$ too large" policy were failing.
 
 \begin{figure*}[t]
     \centering
