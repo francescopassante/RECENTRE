@@ -1,0 +1,28 @@
+# Per-patient fine-tuning of a LEGACY pretrained model (pre normalization
+# unification — i.e. a checkpoint that stores a length-6 mu/sigma and a
+# per-task `feat_std`). Run with: python finetune_old.py configs/finetune_old.yaml
+# The model architecture, sequence_length, and input features are read from the
+# pretrained checkpoint — only the fine-tuning knobs live here.
+#
+# CONSTRAINT: per-patient fine-tuning splits ONE patient's series into three
+# chronological chunks, and each chunk must be >= 2*sequence_length frames.
+# Series lengths are R=1200, M=405, L=316. So the feasible (checkpoint, tasks,
+# split) combinations for the four old conformers are:
+#   ep100    (seq 128): R only, split [0.5,0.25,0.25]  <- best conformer, Resting-only
+#   ep150_2  (seq  64): R only, split [0.5,0.3,0.2]
+#   ep100_2  (seq  32): R+M+L,  split [0.5,0.25,0.25]  (L needs >=64/chunk)
+#   ep150    (seq  10): R+M+L,  split [0.5,0.3,0.2]    (fits every task easily)
+# The default below fine-tunes the best conformer (seq 128) on Resting; switch
+# `pretrained`, `tasks`, and `split_percentages` per the table for other sweeps.
+pretrained: checkpoints/generalist/conformer_R+M+LvR+M+L_beta0.5_ep150.pth  # old conformer (T=10)
+tasks: R+M+L
+split_percentages: [0.5, 0.3, 0.2]   # chronological train/val/test of one patient's frames
+
+batch_size: 16384
+beta: 0.5
+epochs: 30
+patience: 20
+lambda_l2sp: 1.0e-3
+lr_body: 1.0e-4    # small LR for the backbone
+lr_head: 3.0e-4    # larger LR for the final MLP head
+dropout_ft: 0.05   # reduced dropout — the per-patient set is tiny
