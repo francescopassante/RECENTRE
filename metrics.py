@@ -21,18 +21,6 @@ def fd_gain(fd_baseline, fd_pred):
 
 
 def jerk_penalty(pred, x):
-    """Physics-informed motion-smoothness term (computed in normalized space).
-
-    Penalizes the third difference (jerk) of the predicted trajectory on the
-    step-2 lattice the model actually sees -- [x_{-3}, x_{-2}, x_{-1}, pred] --
-    with pred treated as the next point on that lattice. Differences use only
-    step-2 frames (x[t] - x[t-2]), exactly like the velocity/acceleration
-    channels in dataset.py; the skipped in-between frames are never touched.
-
-    Penalizing jerk (not acceleration) leaves genuine constant-acceleration
-    motion unpenalized and only discourages abrupt changes in acceleration, so
-    it does not collapse into a constant-velocity prior on wiggly data.
-    """
     x1, x2, x3 = x[:, -1, :6], x[:, -2, :6], x[:, -3, :6]
     jerk = pred - 3 * x1 + 3 * x2 - x3
     return (jerk**2).mean()

@@ -136,7 +136,6 @@ def fd_gain(pred, y, fd_base):
 
 def train_router(X, E, y, base, tr_idx, val_idx, epochs=200, bs=16384):
     print(X.shape, E.shape)
-    """Maximize mean FD_gain (vs. the previous-frame baseline); select on the held-out val set"""
     # X.shape = (N*wpp, n_exp*12), E.shape = (N*wpp, n_exp + 1, 6)
     fd_base = fd(base, y)
     router = Router(X.shape[1], E.shape[1]).to(device)

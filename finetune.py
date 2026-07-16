@@ -43,8 +43,16 @@ def summarize(out, sigma):
 
 
 def build_patient_split(
-    series, patient_id, sequence_length, batch_size, split_percentages, device,
-    mu, sigma, add_velocity=False, add_acceleration=False,
+    series,
+    patient_id,
+    sequence_length,
+    batch_size,
+    split_percentages,
+    device,
+    mu,
+    sigma,
+    add_velocity=False,
+    add_acceleration=False,
 ):
     """Chronological train/val/test split of one patient's raw series.
 
@@ -79,9 +87,14 @@ def build_patient_split(
     loaders, sizes = {}, {}
     for name, (s, shuffle) in raw_splits.items():
         ds = TimeSeriesDataset(
-            s[None, :, :], [patient_id], sequence_length=sequence_length, device=device,
-            add_velocity=add_velocity, add_acceleration=add_acceleration,
-            mu=mu, sigma=sigma,
+            s[None, :, :],
+            [patient_id],
+            sequence_length=sequence_length,
+            device=device,
+            add_velocity=add_velocity,
+            add_acceleration=add_acceleration,
+            mu=mu,
+            sigma=sigma,
         )
         loaders[name] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
         sizes[name] = len(ds)
@@ -123,8 +136,7 @@ def build_finetune_model(pretrained_state, model_config, cfg, device):
     # Reduce dropout during fine-tuning — the per-patient set is tiny
     model.dp.p = cfg["dropout_ft"]
 
-    # weight_decay=0: L2-SP already regularizes toward the pretrained weights,
-    # so an extra decay toward zero would pull against it.
+    # weight_decay=0: L2-SP already regularizes toward the pretrained weights
     optimizer = torch.optim.Adam(
         [
             {"params": body_params, "lr": cfg["lr_body"]},
@@ -158,8 +170,16 @@ def finetune_patient(patient_id, task, pretrained, task_dicts, cfg, device):
     add_velocity = data_config.get("add_velocity", False)
     add_acceleration = data_config.get("add_acceleration", False)
     loaders, sizes = build_patient_split(
-        series, patient_id, seq_len, cfg["batch_size"], cfg["split_percentages"], device,
-        mu, sigma, add_velocity=add_velocity, add_acceleration=add_acceleration,
+        series,
+        patient_id,
+        seq_len,
+        cfg["batch_size"],
+        cfg["split_percentages"],
+        device,
+        mu,
+        sigma,
+        add_velocity=add_velocity,
+        add_acceleration=add_acceleration,
     )
 
     # BEFORE: the pretrained generalist on this patient's test split

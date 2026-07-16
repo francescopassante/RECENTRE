@@ -17,18 +17,6 @@ def get_device():
 
 
 def count_flops(model, seq_len, in_dim):
-    """FLOPs for one forward pass on a single window, counted on CPU.
-
-    FLOPs are a device-independent property of the computation, but
-    FlopCounterMode only sees the ATen ops it has formulas for (mm/addmm/
-    conv/sdpa). On fused backends (CUDA cuDNN, MPS) nn.GRU/nn.LSTM run as a
-    single fused kernel that is *not* one of those ops, so the entire
-    recurrence is silently counted as zero and only the constant head shows
-    up — making every sequence length report the same FLOPs. On CPU the RNN
-    decomposes into per-timestep addmm calls, so the recurrence is counted
-    and every architecture goes through one identical, correct code path.
-    We therefore always count on CPU regardless of the run device.
-    """
     from torch.utils.flop_counter import FlopCounterMode
 
     was_training = model.training
@@ -598,9 +586,7 @@ class NLinear(nn.Module):
 # arXiv 2005.08100). Each block is the "macaron" structure: half-weight
 # feed-forward, multi-head self-attention, a convolution module, a second
 # half-weight feed-forward, then LayerNorm. The conv module models local motion
-# (spikes); attention models long-range context -- the natural fusion of this
-# repo's TCN and Transformer. Length-agnostic (reads the last timestep), so it
-# needs no sequence_length, like the GRU/TCN/Transformer.
+# (spikes); attention models long-range context
 
 
 class ConformerFeedForward(nn.Module):

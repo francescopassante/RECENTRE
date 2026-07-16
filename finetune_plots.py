@@ -11,8 +11,7 @@ from finetune import DIMS
 """
 =======================================================================================
 Visual comparison of pretrained vs fine-tuned models from the summary CSV written
-by finetune.py. Reads the CSV only — no model loading — so it is cheap to
-re-run while iterating on plots.
+by finetune.py.
 =======================================================================================
 """
 
@@ -219,11 +218,30 @@ if __name__ == "__main__":
         fpresent = [t for t in ("R", "M", "L") if np.any(flabels == t)]
 
         frame_figs = [
-            ("01_error_per_dimension", plots.error_per_dimension(fpred, ftrue, fbase, flabels, fpresent)),
-            ("02_true_vs_predicted", plots.true_vs_predicted(fpred, ftrue, flabels, fpresent)),
-            ("03_fd_distribution", plots.fd_distribution(arr["fd_pred"], arr["fd_base"], flabels, fpresent)),
-            ("06_sigma_calibration", plots.sigma_calibration(arr["z"], flabels, fpresent)),
-            ("08_fdgain_vs_motion", plots.fdgain_vs_motion(arr["fd_pred"], arr["fd_base"], flabels, fpresent)),
+            (
+                "01_error_per_dimension",
+                plots.error_per_dimension(fpred, ftrue, fbase, flabels, fpresent),
+            ),
+            (
+                "02_true_vs_predicted",
+                plots.true_vs_predicted(fpred, ftrue, flabels, fpresent),
+            ),
+            (
+                "03_fd_distribution",
+                plots.fd_distribution(
+                    arr["fd_pred"], arr["fd_base"], flabels, fpresent
+                ),
+            ),
+            (
+                "06_sigma_calibration",
+                plots.sigma_calibration(arr["z"], flabels, fpresent),
+            ),
+            (
+                "08_fdgain_vs_motion",
+                plots.fdgain_vs_motion(
+                    arr["fd_pred"], arr["fd_base"], flabels, fpresent
+                ),
+            ),
         ]
         for name, fig in frame_figs:
             fig.savefig(os.path.join(results_dir, f"ft_{tag}_{name}.png"), dpi=150)

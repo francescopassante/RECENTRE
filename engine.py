@@ -28,9 +28,9 @@ def fit(
     sigma,
     loss="gaussian_nll",
     beta=0.1,
-    gamma=0.0, #coefficient of jerk
+    gamma=0.0,  # coefficient of jerk
     patience=10,
-    reference=None, #weights of trained model (for fine-tuning)
+    reference=None,  # weights of trained model (for fine-tuning)
     lambda_l2sp=0.0,
     verbose=True,
 ):
@@ -76,11 +76,6 @@ def fit(
             fd_pred = fd(mean, y, mu, sigma)
             fdg = fd_gain(fd_base, fd_pred)
 
-            # NOTE: use a distinct name (not `loss`) so we don't clobber the
-            # `loss` string parameter -- otherwise the `loss == "gaussian_nll"`
-            # check above silently becomes False on batch 2 onward (tensor vs
-            # str) and training falls back to MSE, leaving the variance head
-            # untrained.
             total_loss = base_loss - beta * fdg.mean()
 
             # physics-informed motion-smoothness term (jerk on the step-2 lattice)
