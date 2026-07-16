@@ -79,13 +79,11 @@ class GRUModel(nn.Module):
         y_logvar = self.fc_logvar(h_n)
 
         # the mean head predicts a residual added to the last input frame;
-        # variance is returned already exponentiated (do not exp again in callers)
+        # variance is returned already exponentiated
         return (x[:, -1, :6] + y_mean), y_logvar.exp()
 
 
 class CausalConv1d(nn.Module):
-    """Dilated causal 1-D convolution — pad on the left, crop the right so the
-    output at time t never sees future frames."""
 
     def __init__(self, in_channels, out_channels, kernel_size, dilation):
         super().__init__()
@@ -102,7 +100,6 @@ class CausalConv1d(nn.Module):
         )
 
     def forward(self, x):
-        # drop the trailing `padding` samples, which would peek into the future
         return self.conv(x)[:, :, : -self.padding]
 
 
@@ -148,10 +145,6 @@ class TCNModel(nn.Module):
             num_channels (list[int]): channels of each residual block; dilation grows 2**i
             kernel_size (int): conv kernel size
             dropout (float): Dropout rate for regularization
-
-        Same prediction contract as the GRU/Transformer: a causal TCN backbone
-        feeds the shared two-head MLP (fc1 → LayerNorm → ReLU → Dropout → fc_mean /
-        fc_logvar). The mean head predicts a residual added to the last input frame.
         """
         super().__init__()
         num_channels = list(num_channels)
@@ -248,7 +241,7 @@ class TransformerModel(nn.Module):
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer,
             num_layers=num_layers,
-            enable_nested_tensor=False,  # avoids a PyTorch warning with the causal mask
+            enable_nested_tensor=False,
         )
 
         # same head as the other architectures (names kept identical on purpose:
@@ -397,12 +390,9 @@ class PatchTST(nn.Module):
         y_mean = self.fc_mean(out).view(B, D)  # [B, D]
         y_logvar = self.fc_logvar(out).view(B, D)  # [B, D]
 
-        # clamp logvar before exp so the variance stays in a sane range; without
-        # this the GaussianNLL variance term can blow up and the loss goes NaN
+        # clamp logvar before exp so the variance stays finite
         y_logvar = y_logvar.clamp(-10.0, 10.0)
 
-        # output one prediction per channel; keep only the 6 position channels
-        # (extra channels exist when velocity features are appended to the input)
         return (x[:, -1, :6] + y_mean[:, :6]), y_logvar[:, :6].exp()
 
 
@@ -508,8 +498,8 @@ class DLinear(nn.Module):
         )
 
     def forward(self, x):
-        B, L, C = x.shape
-        assert L == self.L and C == self.C
+        B, T, C = x.shape
+        assert T == self.T and C == self.C
 
         x_t = x.permute(0, 2, 1)  # [B, D, T]
 
@@ -519,14 +509,14 @@ class DLinear(nn.Module):
 
         trend = F.avg_pool1d(
             x_padded, kernel_size=self.kernel_size, stride=1
-        )  # for each three elements takes the mean, with stride=1 the output has the same lenght and is the global (trend) movement
+        )  # for each k elements takes the mean, with stride=1 the output has the same lenght and is the global (trend) movement
         season = x_t - trend  # oscillations wrt trend, small scale
 
-        # stack each set of per-channel Linear(L->1) weights into one [C, L] matrix
+        # stack each set of per-channel Linear(T->1) weights into one [C, T] matrix
         # and run all channels as a single batched matmul instead of a Python loop
         # of 3*C tiny kernels (same arithmetic; big win at batch=1 real-time latency)
         def stack_linears(mods):
-            W = torch.stack([m.weight.squeeze(0) for m in mods])  # [C, L]
+            W = torch.stack([m.weight.squeeze(0) for m in mods])  # [C, T]
             b = torch.stack([m.bias for m in mods]).squeeze(-1)  # [C]
             return W, b
 
@@ -695,10 +685,6 @@ class ConformerModel(nn.Module):
         dropout=0.1,
         max_len=512,
     ):
-        """CNN-Transformer hybrid. Same prediction contract as the other models:
-        input [B, T, input_dim] -> (mean, variance); the mean head predicts a
-        residual added to the last input frame, variance is returned exponentiated.
-        """
         super().__init__()
         assert (
             d_model % nhead == 0
