@@ -64,7 +64,7 @@ A deliberately flat, simple codebase — no packages, no abstraction layers.
 | `engine.py` | `fit()` — the one training loop, shared by pretraining and fine-tuning. |
 | `train.py` / `finetune.py` | Drivers; each reads a YAML config. |
 | `evaluate.py` | Evaluate a checkpoint and write the figures to `results/`. |
-| `robustness.py` | Re-evaluate a checkpoint under added test-set noise. |
+| `benchmark.py` | Re-evaluate a checkpoint under added test-set noise. |
 | `routing.py` | Per-frame router (stacking) over frozen experts + baseline. |
 | `distill.py` | Conformer → GRU knowledge distillation (output KL + latent MSE). |
 | `plots.py` / `finetune_plots.py` | Figure generation (eval figures / fine-tuning CSV figures). |
@@ -259,7 +259,7 @@ python routing.py
 python distill.py configs/distill_gru.yaml
 
 # 6. Re-evaluate a checkpoint under added test-set noise
-python robustness.py checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep150.pth
+python benchmark.py checkpoints/generalist/gru_R+M+LvR+M+L_beta0.5_ep150.pth
 ```
 
 **Everything lives in the config.** Model type, hyperparameters, tasks, loss, `β`, epochs, input window length, augmentation, and fine-tuning knobs are all set in `configs/*.yaml` — nothing is hardcoded in the eval scripts. Each checkpoint embeds its full config, so `evaluate.py` / `finetune.py` rebuild the exact model with no hyperparameters repeated anywhere.
