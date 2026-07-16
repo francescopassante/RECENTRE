@@ -1,21 +1,3 @@
-"""routing.py — learned soft routing (stacking) over frozen experts + baseline.
-
-This is stacking / a learned ensemble, NOT a mixture of experts: the experts are
-trained independently and frozen, and only the router on top is trained. In a
-real MoE the experts and gate are trained jointly so the experts specialize to
-the routing; nothing here does that.
-
-A small MLP reads per-frame features_tr (each expert's residual pred-base and its
-predicted sigma) and emits softmax weights over the options;
-the blended prediction is trained to MAXIMIZE FD_gain (over the previous-frame
-baseline) directly. Experts stay frozen, so the router can always fall back on
-the best single one.
-
-Discipline: router trained on val_ids, evaluated on test_ids (both unseen by
-every expert). 15% of val is held out for early stopping. All experts must
-share the identical seeded R+M+L split and the same window length.
-"""
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -180,12 +162,14 @@ if __name__ == "__main__":
     split = torch.load(
         next(iter(EXPERTS.values())), map_location="cpu", weights_only=False
     )
+    val_ids = split["val_ids"]
+    test_ids = split["test_ids"]
     names = list(EXPERTS) + ["baseline"]
 
     print("exacting router-train (val) and router-eval (test) frames...")
     # Collects "features" = residuals and stds for all experts, baseline and true target y both for val and test ids.
-    features_tr, expert_preds_tr, y_tr, base_tr = collect(split["val_ids"])
-    features_test, expert_preds_test, y_test, baseline_test = collect(split["test_ids"])
+    features_tr, expert_preds_tr, y_tr, base_tr = collect(val_ids)
+    features_test, expert_preds_test, y_test, baseline_test = collect(test_ids)
     print(f"  val {len(y_tr):,} frames, test {len(y_test):,} frames, options: {names}")
 
     # standardize features on val, move to device
@@ -227,7 +211,6 @@ if __name__ == "__main__":
         for k in range(n_exp)
     ]
 
-    # control: does per-frame weighting beat a fixed average?
     rows.append(
         (f"fixed mean of {n_exp}", mean_fd_gain(expert_preds_test[:, :n_exp].mean(1)))
     )
@@ -237,7 +220,7 @@ if __name__ == "__main__":
     rows.append(("soft router", mean_fd_gain(pred_soft_t.cpu().numpy())))
 
     # control: the router's average weights frozen and reused on every frame,
-    # so any gap vs "soft router" is purely the per-frame routing (not the weights)
+    # so any gap vs "soft router" is purely the per-frame routing
     wm = w.mean(0).cpu().numpy()  # [K] mean weight per option over test frames
     pred_fixed_w = (wm[None, :, None] * expert_preds_test).sum(1)
     rows.append(

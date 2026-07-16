@@ -6,14 +6,13 @@ Outputs (results/benchmark/): benchmark.csv
 
 import os
 import sys
-import time
 
 import numpy as np
 import torch
 
 from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
 from metrics import evaluate
-from models import build_model, count_flops, get_device
+from models import build_model, count_flops, get_device, time_batch
 
 CKPT_DIR = sys.argv[1] if len(sys.argv) > 1 else "checkpoints/generalist"
 RESULTS_DIR = "results/benchmark"
@@ -26,30 +25,6 @@ device = get_device()
 print(f"device: {device}\nscanning: {CKPT_DIR}\n")
 
 
-# ── deployment profiling (params / size / FLOPs / latency), lifted from evaluate.py ──
-def sync():
-    # GPU kernels run asynchronously: model(x) only enqueues work and returns
-    # before the GPU finishes. Block until the queue drains so perf_counter
-    # brackets real compute, not just the CPU-side launch loop.
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    elif device.type == "mps":
-        torch.mps.synchronize()
-
-
-def time_batch(model, batch_size, seq_len, in_dim, warmup=3, runs=20):
-    xb = torch.randn(batch_size, seq_len, in_dim, device=device)
-    with torch.no_grad():
-        for _ in range(warmup):
-            model(xb)
-        sync()  # ensure warmup work is done before starting the clock
-        t = time.perf_counter()
-        for _ in range(runs):
-            model(xb)
-        sync()  # wait for all runs to finish before stopping the clock
-        return (time.perf_counter() - t) / runs
-
-
 def profile(model, config):
     """Parameter count, float32 size, FLOPs/window and latency for one model."""
     seq_len = config["data"]["sequence_length"]
@@ -59,8 +34,8 @@ def profile(model, config):
 
     flops = count_flops(model, seq_len, in_dim)
 
-    latency_single = time_batch(model, 1, seq_len, in_dim)
-    latency_batch = time_batch(model, BATCH_SIZE, seq_len, in_dim)
+    latency_single = time_batch(model, device, 1, seq_len, in_dim)
+    latency_batch = time_batch(model, device, BATCH_SIZE, seq_len, in_dim)
     return {
         "n_params": n_params,
         "size_mb": size_mb,

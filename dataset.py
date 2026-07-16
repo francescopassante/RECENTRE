@@ -46,6 +46,7 @@ class TimeSeriesDataset(Dataset):
         mu=None,
         sigma=None,
     ):
+        assert mu is not None and sigma is not None, "mu/sigma are required"
         # `data` is RAW positions [N, T, 6]. Augmentation happens on positions
         # first, then velocity/acceleration are derived from the (possibly
         # flipped/negated) positions, so the derived channels stay consistent.
@@ -63,13 +64,8 @@ class TimeSeriesDataset(Dataset):
 
         feats = build_features(self.data, add_velocity, add_acceleration)  # [N,T,C]
 
-        # Per-channel normalization if mu/sigma are not passed.
-        if mu is None or sigma is None:
-            mu = feats.mean(dim=(0, 1), keepdim=True)
-            sigma = feats.std(dim=(0, 1), keepdim=True, correction=0) + 1e-6
-        else:
-            mu = torch.as_tensor(mu, dtype=torch.float32, device=feats.device)
-            sigma = torch.as_tensor(sigma, dtype=torch.float32, device=feats.device)
+        mu = torch.as_tensor(mu, dtype=torch.float32, device=feats.device)
+        sigma = torch.as_tensor(sigma, dtype=torch.float32, device=feats.device)
         self.mu, self.sigma = mu, sigma
         self.data = (feats - mu) / sigma
 

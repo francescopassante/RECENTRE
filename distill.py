@@ -11,25 +11,6 @@ from dataset import split_data
 from metrics import evaluate, fd, fd_gain
 from models import build_model, get_device
 
-"""
-the student is trained on three signals, each with its own weight:
-
-  lambda_task : the usual loss (GaussianNLL - beta * fd_gain).
-  alpha_out   : output distillation. KL between the teacher's and
-                student's per-dim Gaussians -> pulls student (mean, var) toward
-                the teacher's
-  alpha_feat  : penultimate-feature distillation. Every architecture funnels
-                into fc_mean; we match the vector feeding it (projected from
-                the student's width to the teacher's) with an MSE.
-
-The student reuses the teacher checkpoint's exact seeded split (train/val/test
-ids + mu/sigma), so it trains on the same frames the teacher trained on and is
-evaluated on the same held-out test patients -- directly comparable to the
-benchmark. Model selection / early stopping use val FD-gain
-
-Usage: python distill.py configs/distill_gru.yaml
-"""
-
 config_path = sys.argv[1]
 print(f"Loading {config_path}...")
 config = yaml.safe_load(open(config_path))
@@ -243,7 +224,6 @@ for epoch in pbar:
 
 student.load_state_dict(best_state)
 
-# ---- report: how much of the teacher->student headroom did we capture? -------
 pred_sigma = evaluate(student, val_loader, mu, sigma, device)["std"]
 
 teacher_fdg = mean_fdg(evaluate(teacher, test_loader, mu, sigma, device))
@@ -253,7 +233,7 @@ print(
     f"(best val FD-gain {best_val_fdg:.4f}, epoch {best_epoch})"
 )
 
-# ---- save a checkpoint evaluate.py can load (student config embedded) ---------
+
 out_config = {
     "model": student_model_config,
     "data": data_config,

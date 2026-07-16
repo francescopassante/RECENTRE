@@ -17,7 +17,7 @@ DIMS = ["Tx", "Ty", "Tz", "Rx", "Ry", "Rz"]
 
 
 def load_task_dicts():
-    """Load the per-task {patient_id: ndarray[T, 6]} dicts. Keys are strings."""
+    """Load the per-task {patient_id: ndarray[T, 6]} dicts"""
     return {
         t: np.load(f"datasets/{t}_dict.npy", allow_pickle=True).item()
         for t in ("R", "M", "L")
@@ -121,12 +121,12 @@ def split_finetune_params(model):
 
 
 def build_finetune_model(pretrained_state, model_config, cfg, device):
-    """Fresh pretrained model set up for fine-tuning: frozen variance head, two
-    LR groups, reduced dropout, plus the L2-SP reference snapshot (theta_0)."""
+    """Setup the pretrained model for finetuning: frozen variance head, two
+    LR groups, reduced dropout, plus the L2-SP reference snapshot."""
     model = build_model(model_config).to(device)
     model.load_state_dict(pretrained_state)
 
-    # Snapshot the pretrained weights as the L2-SP reference (theta_0)
+    # Snapshot the pretrained weights as the L2-SP reference
     reference = {
         name: param.clone().detach() for name, param in model.named_parameters()
     }

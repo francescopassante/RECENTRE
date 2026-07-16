@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,7 +8,7 @@ import torch
 import plots
 from dataset import GPUBatchLoader, TimeSeriesDataset, parse_task
 from metrics import evaluate
-from models import build_model, count_flops, get_device
+from models import build_model, count_flops, get_device, time_batch
 
 """
 ====================================================================
@@ -214,32 +213,11 @@ model.eval()
 flops_per_sample = count_flops(model, seq_len, config["model"]["input_dim"])
 
 
-def sync():
-    # GPU kernels run asynchronously: model(x) only enqueues work and returns
-    # before the GPU finishes. Block until the queue drains so perf_counter
-    # brackets real compute, not just the CPU-side launch loop.
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    elif device.type == "mps":
-        torch.mps.synchronize()
-
-
-def time_batch(batch_size, warmup=3, runs=20):
-    xb = torch.randn(batch_size, seq_len, config["model"]["input_dim"], device=device)
-    with torch.no_grad():
-        for _ in range(warmup):
-            model(xb)
-        sync()  # ensure warmup work is done before starting the clock
-        t = time.perf_counter()
-        for _ in range(runs):
-            model(xb)
-        sync()  # wait for all runs to finish before stopping the clock
-        return (time.perf_counter() - t) / runs
-
-
-latency_single = time_batch(1)  # real-time, one frame at a time
+latency_single = time_batch(
+    model, device, 1, seq_len, config["model"]["input_dim"]
+)  # real-time, one frame at a time
 batch_size = 1024
-latency_batch = time_batch(batch_size)
+latency_batch = time_batch(model, device, batch_size, seq_len, config["model"]["input_dim"])
 throughput = batch_size / latency_batch  # samples/sec
 
 profile_rows = [

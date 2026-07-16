@@ -1,6 +1,6 @@
 __pycache__/
 datasets/
-checkpoints/
+.venv/
 .DS_Store
 
 # LaTeX build artifacts
@@ -16,5 +16,7 @@ presentation/main.bbl
 presentation/main.blg
 presentation/main.pdf
 
+
+old/
 distill/
-results/benchmark/
+results/
