@@ -15,12 +15,12 @@
 # NOTE: must be the seq-64 conformer -- checkpoint names do not encode the window
 # length, so the seq-64 and seq-128 files are named identically. Check
 # ckpt["config"]["data"]["sequence_length"] == 64 before trusting this path.
-teacher: checkpoints/generalist/conformer_R+M+LvR+M+L_beta0.5_ep100.pth
+teacher: checkpoints/generalist/conformer_R+M+LvR+M+L_beta0.5_ep150.pth
 output_dir: checkpoints/distill
 
 model:                 # the student: same block config as the teacher, shorter window
   type: conformer
-  input_dim: 6         # must match the teacher's input_dim (asserted in distill.py)
+  input_dim: 18         # must match the teacher's input_dim (asserted in distill.py)
   output_dim: 6
   d_model: 64
   nhead: 4             # must divide d_model
