@@ -55,13 +55,26 @@ teacher_ckpt = torch.load(teacher_path, map_location=device, weights_only=False)
 teacher_config = teacher_ckpt["config"]
 teacher_in = teacher_config["model"]["input_dim"]
 
-# data augmentation and batch size are overloadable, all the rest is fixed.
+# data augmentation, batch size and the student's window length are overloadable,
+# all the rest is fixed. `or {}` because an empty `data:` block parses as None.
+student_data_config = config.get("data") or {}
 data_config = dict(teacher_config["data"])
 for k in ("neg_augmentation", "time_augmentation", "batch_size"):
-    if k in config.get("data", {}):
-        data_config[k] = config["data"][k]
+    if k in student_data_config:
+        data_config[k] = student_data_config[k]
 # student and teacher must share the same input_dim
 assert teacher_in == student_model_config["input_dim"]
+
+# The student may read a shorter window than the teacher. dataset.py builds
+# x = [t, t+2, ..., t+2*seq-2] with the target one frame past the last input
+# point, so the last student_seq points of a teacher window are themselves a
+# valid student_seq window with the same target: slicing x is all it takes.
+# Loaders stay on the teacher's sequence_length (it needs the full context).
+teacher_seq = data_config["sequence_length"]
+student_seq = student_data_config.get("sequence_length", teacher_seq)
+assert (
+    1 <= student_seq <= teacher_seq
+), f"student sequence_length ({student_seq}) must be <= the teacher's ({teacher_seq})"
 
 teacher = build_model(teacher_config["model"]).to(device)
 teacher.load_state_dict(teacher_ckpt["model_state"])
@@ -103,8 +116,31 @@ print(
 student = build_model(student_model_config).to(device)
 n_params = sum(p.numel() for p in student.parameters() if p.requires_grad)
 print(
-    f"student: {student_model_config['type']}  |  trainable params: {n_params:,}  "
+    f"student: {student_model_config['type']}  seq_len={student_seq}  "
+    f"|  trainable params: {n_params:,}  "
     f"|  penultimate dim={student.fc_mean.in_features}"
+)
+
+
+class ShortWindow(nn.Module):
+    """Feeds the wrapped model only the last seq_len points of the window.
+
+    Used to run evaluate() on a student whose window is shorter than the loader's:
+    the baseline there is read off x[:, -1] (metrics.evaluate), which the slice
+    leaves untouched, so teacher and student are scored against the same baseline.
+    """
+
+    def __init__(self, model, seq_len):
+        super().__init__()
+        self.model = model
+        self.seq_len = seq_len
+
+    def forward(self, x):
+        return self.model(x[:, -self.seq_len :, :])
+
+
+student_eval = (
+    student if student_seq == teacher_seq else ShortWindow(student, student_seq)
 )
 
 # projection maps the student penultimate into the teacher's penultimate space
@@ -203,7 +239,7 @@ for epoch in pbar:
             mean_t, var_t = teacher(x)
             feat_t = penultimate["teacher"]
 
-        mean_s, var_s = student(x)
+        mean_s, var_s = student(x[:, -student_seq:, :])
         feat_s = penultimate["student"]
 
         last_x = x[:, -1, :6]
@@ -224,7 +260,7 @@ for epoch in pbar:
         optimizer.step()
 
     # ---- validation: select on FD-gain, step scheduler on task loss ----------
-    val_result = evaluate(student, val_loader, mu, sigma, device)
+    val_result = evaluate(student_eval, val_loader, mu, sigma, device)
     val_fdg = mean_fdg(val_result)
     val_loss = val_result["nll"] - beta * val_fdg
 
@@ -244,21 +280,27 @@ for epoch in pbar:
 student.load_state_dict(best_state)
 
 # ---- report: how much of the teacher->student headroom did we capture? -------
-pred_sigma = evaluate(student, val_loader, mu, sigma, device)["std"]
+pred_sigma = evaluate(student_eval, val_loader, mu, sigma, device)["std"]
 
 teacher_fdg = mean_fdg(evaluate(teacher, test_loader, mu, sigma, device))
-student_fdg = mean_fdg(evaluate(student, test_loader, mu, sigma, device))
+student_fdg = mean_fdg(evaluate(student_eval, test_loader, mu, sigma, device))
 print(
     f"\ntest FD-gain  |  teacher {teacher_fdg:.4f}  student {student_fdg:.4f}  "
     f"(best val FD-gain {best_val_fdg:.4f}, epoch {best_epoch})"
 )
 
 # ---- save a checkpoint evaluate.py can load (student config embedded) ---------
+# the student's own window length goes in its config, so evaluate.py rebuilds the
+# right windows and profiles FLOPs/latency at the length the student actually runs.
+out_data_config = dict(data_config)
+out_data_config["sequence_length"] = student_seq
+
 out_config = {
     "model": student_model_config,
-    "data": data_config,
+    "data": out_data_config,
     "train": train_config,
     "teacher": teacher_path,
+    "teacher_sequence_length": teacher_seq,
     "distill": distill_config,
 }
 checkpoint = {
@@ -277,7 +319,8 @@ checkpoint = {
 out_dir = config.get("output_dir", "checkpoints/distill")
 os.makedirs(out_dir, exist_ok=True)
 name = (
-    f"{student_model_config['type']}_distill_from_{teacher_config['model']['type']}"
+    f"{student_model_config['type']}_seq{student_seq}"
+    f"_distill_from_{teacher_config['model']['type']}_seq{teacher_seq}"
     f"_{data_config['train_task']}v{data_config['test_task']}_beta{beta}"
     f"_ep{train_config['epochs']}"
 )

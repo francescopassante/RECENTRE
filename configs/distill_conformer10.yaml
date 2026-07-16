@@ -1,0 +1,48 @@
+# Distill the seq-64 conformer teacher (FD-gain 0.213, 20.2 MFLOPs) into a seq-10
+# conformer student -- same architecture, ~6x shorter window (FLOPs are linear in
+# the window here: 40.4 M @128, 20.2 M @64, so the student lands around 3 M).
+#
+# Sequence length is the biggest accuracy lever in the benchmark, so the question
+# this asks is whether the long-context teacher can hand its context down to a
+# student that never sees it: the student reads only the last 10 points of the
+# teacher's 64-point window and is pushed to reproduce the teacher's output
+# distribution (KL) and its pre-head features (MSE). Baseline to beat is the
+# vanilla seq-10 conformer row in results/benchmark/benchmark_table.md.
+#
+# Tasks, split ids, mu/sigma and augmentation all come from the teacher checkpoint,
+# so the student is directly comparable to that benchmark row.
+
+# NOTE: must be the seq-64 conformer -- checkpoint names do not encode the window
+# length, so the seq-64 and seq-128 files are named identically. Check
+# ckpt["config"]["data"]["sequence_length"] == 64 before trusting this path.
+teacher: checkpoints/generalist/conformer_R+M+LvR+M+L_beta0.5_ep100.pth
+output_dir: checkpoints/distill
+
+model:                 # the student: same block config as the teacher, shorter window
+  type: conformer
+  input_dim: 6         # must match the teacher's input_dim (asserted in distill.py)
+  output_dim: 6
+  d_model: 64
+  nhead: 4             # must divide d_model
+  num_layers: 2
+  ff_expansion: 4
+  conv_kernel: 7       # odd and <= 10, the student's window length
+  dropout: 0.1
+
+data:                  # student-only overrides; tasks/split/mu/sigma come from the teacher
+  sequence_length: 10  # student window; loaders stay at the teacher's 64
+
+train:
+  loss: gaussian_nll   # hard-target base loss (kept for reference; distill uses NLL)
+  beta: 0.5            # FD-gain weight in the hard-target term
+  epochs: 100
+  patience: 30
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+
+distill:
+  lambda_task: 1.0     # weight on the unbiased hard target (GaussianNLL - beta*fd_gain)
+  alpha_out: 1.0       # output distillation: Gaussian KL(teacher || student) on mean+var
+  alpha_feat: 1.0      # penultimate-feature distillation: projected (64->64) MSE
+  temperature: 1.0     # >1 softens the teacher variance in the output KL
+  feat_normalize: true # per-sample standardize features before the MSE (scale-free)
