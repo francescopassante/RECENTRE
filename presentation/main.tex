@@ -46,7 +46,7 @@ the hyperparameters of the model, the preprocessing pipeline of the data and the
 
 The raw dataset is taken from the Human Connectome Project (HCP), which consists in navigator data taken by MRI machines with a sampling frequency of $720$ ms. Each 'frame' has 6 motion parameters: 3 of them are translation parameters describing the head position of the patient, the remaining 3 are rotation parameters indicating the inclination of the patient's head. The dataset contains three different scenarios: the "R" (resting) one, where patients were resting while the MRI scan was running, then the "M" (memory) one, where patients were recollecting memories, and the "L" (language) one, where patients were actively talking.
 There are a total of 3221 time series among the three tasks. Each time series is associated with a patient. The preprocessing pipeline discards 140 time series, so that 1027 patients are all associated with the 3 time series of the "R", "M", "L" tasks. The three tasks have different time lengths. The R data is 1200 frames long, while the M and L are 405 and 316 frames long, respectively.
-Lots of effort was put in the thesis and paper to study different data splits for training and testing, e.g. considering the "cross-task" scenario or "cross-patient" scenario.
+Lots of effort was put in the thesis~\ref{Nistico2025Recentre} and paper to study different data splits for training and testing, e.g. considering the "cross-task" scenario or "cross-patient" scenario.
 We build on their findings (no substantial difference in performance among the different scenarios) by: 
 
 \begin{enumerate}
