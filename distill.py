@@ -4,7 +4,6 @@ import sys
 import numpy as np
 import torch
 import torch.nn as nn
-import tqdm
 import yaml
 
 from dataset import split_data
@@ -226,12 +225,10 @@ best_epoch = 0
 early_stop_counter = 0
 patience = train_config["patience"]
 
-pbar = tqdm.trange(train_config["epochs"])
-for epoch in pbar:
+epochs = train_config["epochs"]
+for epoch in range(epochs):
     student.train()
-    for patient_ids, x, y in tqdm.tqdm(
-        train_loader, leave=False, desc=f"epoch {epoch + 1}"
-    ):
+    for patient_ids, x, y in train_loader:
         optimizer.zero_grad()
         x, y = x.to(device), y.to(device)
 
@@ -265,17 +262,26 @@ for epoch in pbar:
     val_loss = val_result["nll"] - beta * val_fdg
 
     scheduler.step(val_loss)
-    pbar.set_postfix({"val_loss": f"{val_loss:.4f}", "val_fdg": f"{val_fdg:.4f}"})
 
-    if val_fdg > best_val_fdg:
+    is_best = val_fdg > best_val_fdg
+    if is_best:
         best_val_fdg = val_fdg
         best_epoch = epoch + 1
         early_stop_counter = 0
         best_state = {k: v.detach().clone() for k, v in student.state_dict().items()}
     else:
         early_stop_counter += 1
-        if early_stop_counter >= patience:
-            break
+
+    # one line per epoch. A tqdm bar redraws by carriage return, which a
+    # non-tty stdout (Colab's `!python`) turns into one new line per refresh.
+    print(
+        f"epoch {epoch + 1}/{epochs}  val_loss {val_loss:.4f}  "
+        f"val_fdg {val_fdg:.4f}{'  *best' if is_best else ''}",
+        flush=True,
+    )
+
+    if early_stop_counter >= patience:
+        break
 
 student.load_state_dict(best_state)
 
